@@ -59,12 +59,12 @@ func main() {
 
 	sort.Sort(ByKey(intermediate))
 
-	oname := "mr-out-0"
+	oname := "xmr-out-0"
 	ofile, _ := os.Create(oname)
 
 	//
 	// call Reduce on each distinct key in intermediate[],
-	// and print the result to mr-out-0.
+	// and print the result to xmr-out-0.
 	//调用Reduce
 	i := 0
 	for i < len(intermediate) {

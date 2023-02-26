@@ -1,6 +1,12 @@
 package mr
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+	"io/ioutil"
+	"os"
+	"strconv"
+)
 import "log"
 import "net/rpc"
 import "hash/fnv"
@@ -25,8 +31,61 @@ func NewWorker(mapf func(string, string) []KeyValue,
 }
 
 func (w *Worker) Work() {
-	//获取任务
-	w.GetTask()
+	for {
+		//获取任务
+		task := w.GetTask()
+		//已经没有任务了
+		if task == nil {
+			fmt.Printf("work:failed to get task\n")
+			return
+		}
+		fmt.Println(task.Status)
+		switch task.Status {
+		case DoingMap:
+			if err := w.DoMap(task); err != nil {
+				fmt.Println(err)
+				return
+			}
+		case NextReduce:
+		}
+	}
+}
+
+func (w *Worker) DoMap(task *Task) error {
+	fmt.Println("开始执行Map")
+	file, err := os.Open(task.TaskName)
+	if err != nil {
+		return errors.New("worker DoMap: cannot open " + task.TaskName)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		return errors.New("worker DoMap: cannot read " + task.TaskName)
+	}
+	_ = file.Close()
+	keyValues := w.MapFunc(task.TaskName, string(content))
+	hashKV := make(map[int][]KeyValue)
+	for _, keyValue := range keyValues {
+		rNum := ihash(keyValue.Key) % task.ReduceNums
+		hashKV[rNum] = append(hashKV[rNum], keyValue)
+	}
+	//将键值对写入中间文件
+	oNamePrefix := "mr-tmp-"
+	for i := 0; i < task.ReduceNums; i++ {
+		oName := oNamePrefix + task.TaskName + strconv.Itoa(i)
+		file, err := os.Create(oName)
+		if err != nil {
+			return errors.New("work doMap:" + err.Error())
+		}
+		for _, keyValue := range hashKV[i] {
+			if _, err := fmt.Fprintf(file, "%v %v\n", keyValue.Key, keyValue.Value); err != nil {
+				return errors.New("work doMap:" + err.Error())
+			}
+		}
+		if err = file.Close(); err != nil {
+			return errors.New("work doMap:" + err.Error())
+		}
+	}
+	return nil
 }
 
 //

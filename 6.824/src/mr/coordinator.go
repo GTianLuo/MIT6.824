@@ -5,30 +5,54 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 )
 import "net"
 import "net/rpc"
 
+type TaskStatus int
+
+const (
+	Completed TaskStatus = iota
+	NextMap
+	DoingMap
+	NextReduce
+	DoingReduce
+)
+
 type Coordinator struct {
-	Tasks []string   //任务列表
-	Index int        //执行进度
-	mu    sync.Mutex //防止任务被多拿
+	Tasks      []*Task
+	ReduceNums int
+	mu         sync.Mutex //防止任务被多拿
 }
 
 type Task struct {
-	TaskName string //任务名称(文件名)
+	Status     TaskStatus //任务状态
+	TaskName   string     //任务名称(文件名)
+	ReduceNums int        //每个map任务生成reduce任务的数量
 }
 
 func (c *Coordinator) GetTask(args *TaskRequest, reply *TaskResponse) error {
 	//任务已经全部完成
+	completed := true
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.Index >= len(c.Tasks) {
-		return errors.New("the task has been completed")
+	for _, task := range c.Tasks {
+		if task.Status != Completed {
+			completed = false
+		}
+		if task.Status == NextMap || task.Status == NextReduce {
+			reply.T = task
+			task.Status++
+			return nil
+		}
 	}
-	reply.T = &Task{TaskName: c.Tasks[c.Index]}
-	c.Index++
-	return nil
+	if completed {
+		return errors.New("All tasks have been completed")
+	}
+	//还有任务未完成，只不过都被拿走
+	time.Sleep(100)
+	return c.GetTask(args, reply)
 }
 
 //
@@ -60,8 +84,14 @@ func (c *Coordinator) Done() bool {
 }
 
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
+	tasks := make([]*Task, 0)
+	for _, file := range files {
+		task := &Task{TaskName: file, Status: NextMap, ReduceNums: nReduce}
+		tasks = append(tasks, task)
+	}
 	c := Coordinator{
-		Tasks: files,
+		Tasks:      tasks,
+		ReduceNums: nReduce,
 	}
 
 	// Your code here.
