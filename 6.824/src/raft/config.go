@@ -431,7 +431,7 @@ func (cfg *config) setlongreordering(longrel bool) {
 //
 func (cfg *config) checkOneLeader() int {
 	for iters := 0; iters < 10; iters++ {
-		ms := 700 + (rand.Int63() % 100)
+		ms := 450 + (rand.Int63() % 100)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
 
 		leaders := make(map[int][]int)
@@ -486,6 +486,7 @@ func (cfg *config) checkNoLeader() {
 		if cfg.connected[i] {
 			_, is_leader := cfg.rafts[i].GetState()
 			if is_leader {
+
 				cfg.t.Fatalf("expected no leader among connected servers, but %v claims to be leader", i)
 			}
 		}

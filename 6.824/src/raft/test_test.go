@@ -61,8 +61,10 @@ func TestReElection2A(t *testing.T) {
 	fmt.Println("第一次检查完成==============================================")
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
+	fmt.Println("上一个leader挂了")
 	cfg.checkOneLeader()
 	fmt.Println("第二次检查完成==============================================")
+	fmt.Println("挂掉的leader恢复了")
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader. and the old leader
 	// should switch to follower.

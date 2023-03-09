@@ -205,17 +205,31 @@ type AppendEntriesReply struct {
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	//首先判读一致性
-	fmt.Println("心跳检测")
-	term, _ := rf.GetState()
+	term, isLeader := rf.GetState()
 	reply.Term = term
-	/*
-		if !isLeader || rf.appendEntriesCheck(args.Term, term) {
-			fmt.Println("退出")
-			return
-		}*/
+	if !rf.appendEntriesCheck(args.Term, term) {
+		fmt.Println(rf.me, "丢弃来自", args.LeaderId, "的包")
+		return
+	}
+	if isLeader {
+		fmt.Println("leader", rf.me, "收到心跳包")
+		fmt.Println("发送方", args.LeaderId, "term:", args.Term, " 我", rf.me, "的term:", term)
+	}
+	//当前节点如果是leader，说明此时有两个leader存在
+	if isLeader && term < args.Term {
+		//更新任期
+		rf.mu.Lock()
+		rf.term = args.Term
+		rf.mu.Unlock()
+		//卸职
+		rf.parseRaftStatus(follower)
+		fmt.Println(rf.me, "卸职")
+		return
+	}
 	rf.mu.Lock()
 	rf.term = args.Term
 	rf.status = follower
+	rf.hasVote = true
 	atomic.StoreInt64(&rf.lastAppend, time.Now().UnixNano()/1e6)
 	fmt.Println(args.LeaderId, "向", rf.me, "发送心跳")
 	rf.mu.Unlock()
@@ -227,9 +241,11 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
-func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	return ok
+func (rf *Raft) sendRequestVote(server int, replys chan *RequestVoteReply, args *RequestVoteArgs, reply *RequestVoteReply) bool {
+	if rf.peers[server].Call("Raft.RequestVote", args, reply) {
+		replys <- reply
+	}
+	return true
 }
 
 func (rf *Raft) appendEntriesCheck(leaderTerm, myTerm int) bool {
@@ -292,6 +308,7 @@ func (rf *Raft) killed() bool {
 // heartsbeats recently.
 func (rf *Raft) ticker() {
 	for rf.killed() == false {
+		//如果当前节点是follower，更新选票
 		//160ms就会有一次心跳，选举超时时间应远大于160，这里取[500,650]
 		timeout := int64(rand.Intn(150) + 300)
 		//当前raft是leader或者选举还未超时
@@ -304,10 +321,9 @@ func (rf *Raft) ticker() {
 			fmt.Println(rf.me, "还没有过期")
 			time.Sleep(time.Duration(timeout-interval) * time.Millisecond)
 		} else {
-			fmt.Println(rf.me, "开始选举")
+			//fmt.Println(rf.me, "开始选举")
 			rf.electLeader()
 			time.Sleep(time.Duration(timeout) * time.Millisecond)
-			//重置选票
 			rf.mu.Lock()
 			rf.hasVote = true
 			rf.mu.Unlock()
@@ -317,41 +333,33 @@ func (rf *Raft) ticker() {
 }
 
 func (rf *Raft) electLeader() {
-	//fmt.Println(rf.me, "开始选举")
+	fmt.Println(rf.me, "开始选举")
 	rf.parseRaftStatus(candidate)
 	rf.mu.Lock()
 	rf.term++
 	args := &RequestVoteArgs{CandidateId: rf.me, Term: rf.term}
 	rf.mu.Unlock()
-	validNodesCounts := 0 //有效节点个数
-	successCount := 0     // 被选上的票数
-	survivalNode := make([]int, 0)
+	successCount := 0 // 被选上的票数
 	//先对自己征票
-	reply := &RequestVoteReply{}
-	if rf.sendRequestVote(rf.me, args, reply) {
-		validNodesCounts++
-		survivalNode = append(survivalNode, rf.me)
-	}
-	if reply.VoteGranted {
-		successCount++
-	}
+	replys := make(chan *RequestVoteReply, len(rf.peers))
 	//对其它的节点征票
 	for i := 0; i < len(rf.peers); i++ {
-		if i == rf.me {
-			continue
-		}
-		reply = &RequestVoteReply{}
-		if rf.sendRequestVote(i, args, reply) {
-			validNodesCounts++
-			survivalNode = append(survivalNode, i)
-		}
-		if reply.VoteGranted {
-			successCount++
+		reply := &RequestVoteReply{}
+		go rf.sendRequestVote(i, replys, args, reply)
+	}
+	for i := 0; i < len(rf.peers); i++ {
+		select {
+		case <-time.After(1 * time.Second):
+			fmt.Println("部分网络请求超时")
+		case r := <-replys:
+			if r.VoteGranted {
+				successCount++
+			}
 		}
 	}
 	//如果选票大于等于有效节点个数的一半，成功当选
-	fmt.Println("当前存活节点:", survivalNode, "   ", rf.me, "获得选票数", successCount)
-	if successCount > (validNodesCounts)/2 {
+	fmt.Println(rf.me, "获得选票数", successCount)
+	if successCount > len(rf.peers)/2 {
 		fmt.Println(rf.me, "成功当选leader")
 		rf.parseRaftStatus(leader)
 		go rf.heartBeat()
@@ -361,7 +369,6 @@ func (rf *Raft) electLeader() {
 func (rf *Raft) heartBeat() {
 	//每个160ms发送一次心跳包
 	for rf.killed() == false {
-		time.Sleep(160 * time.Millisecond)
 		term, _ := rf.GetState()
 		args := &AppendEntriesArgs{Term: term, LeaderId: rf.me}
 		for i := 0; i < len(rf.peers); i++ {
@@ -380,6 +387,7 @@ func (rf *Raft) heartBeat() {
 				return
 			}
 		}
+		time.Sleep(160 * time.Millisecond)
 	}
 }
 

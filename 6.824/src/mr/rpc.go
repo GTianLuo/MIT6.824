@@ -15,11 +15,19 @@ import "strconv"
 //
 
 type TaskRequest struct {
-	X int
+	Pid int
 }
 
 type TaskResponse struct {
 	T *Task
+}
+
+type CompletedRequest struct {
+	Pid int
+	T   *Task
+}
+
+type CompletedResponse struct {
 }
 
 // Add your RPC definitions here.
