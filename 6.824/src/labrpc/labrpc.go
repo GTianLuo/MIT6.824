@@ -49,7 +49,10 @@ package labrpc
 //   pass svc to srv.AddService()
 //
 
-import "6.824/labgob"
+import (
+	"6.824/labgob"
+	"fmt"
+)
 import "bytes"
 import "reflect"
 import "sync"
@@ -416,9 +419,11 @@ func (rs *Server) dispatch(req reqMsg) replyMsg {
 
 	rs.mu.Unlock()
 
+	//fmt.Println(methodName)
 	if ok {
 		return service.dispatch(methodName, req)
 	} else {
+		fmt.Println(methodName)
 		choices := []string{}
 		for k, _ := range rs.services {
 			choices = append(choices, k)
@@ -451,6 +456,7 @@ func MakeService(rcvr interface{}) *Service {
 	svc.name = reflect.Indirect(svc.rcvr).Type().Name()
 	svc.methods = map[string]reflect.Method{}
 
+	//fmt.Println(svc.typ.NumMethod())
 	for m := 0; m < svc.typ.NumMethod(); m++ {
 		method := svc.typ.Method(m)
 		mtype := method.Type
@@ -469,6 +475,7 @@ func MakeService(rcvr interface{}) *Service {
 		} else {
 			// the method looks like a handler
 			svc.methods[mname] = method
+			//fmt.Println(mname)
 		}
 	}
 
@@ -476,6 +483,7 @@ func MakeService(rcvr interface{}) *Service {
 }
 
 func (svc *Service) dispatch(methname string, req reqMsg) replyMsg {
+	//fmt.Println("call ", methname)
 	if method, ok := svc.methods[methname]; ok {
 		// prepare space into which to read the argument.
 		// the Value's type will be a pointer to req.argsType.

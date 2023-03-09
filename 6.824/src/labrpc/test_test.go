@@ -595,3 +595,36 @@ func TestBenchmark(t *testing.T) {
 	fmt.Printf("%v for %v\n", time.Since(t0), n)
 	// march 2016, rtm laptop, 22 microseconds per RPC
 }
+
+type Math struct {
+}
+
+type MathRequest struct {
+	A, B int
+}
+
+type MathResponse struct {
+	C int
+}
+
+func (m *Math) Add(req *MathRequest, resp *MathResponse) {
+	fmt.Println("执行加法")
+	time.Sleep(time.Second * 10)
+	resp.C = req.B + req.A
+}
+
+func TestRPC(t *testing.T) {
+	net := MakeNetwork()
+	end := net.MakeEnd("end1")
+
+	serv := MakeService(&Math{})
+	server := MakeServer()
+	server.AddService(serv)
+	net.AddServer("server1", server)
+	net.Connect("end1", "server1")
+	net.Enable("end1", true)
+
+	reply := &MathResponse{}
+	end.Call("Math.Add", &MathRequest{A: 10, B: 10}, reply)
+	fmt.Println("执行结果为：", reply.C)
+}
