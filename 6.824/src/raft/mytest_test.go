@@ -2,6 +2,7 @@ package raft
 
 import (
 	"fmt"
+	"math/rand"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -29,5 +30,39 @@ func TestTime(t *testing.T) {
 		}
 		//fmt.Println(now.UnixNano()/1e6 - time.Now().UnixNano()/1e6)
 	}
+}
 
+type s struct {
+	x int
+	y int
+}
+
+func A(x *s) {
+	fmt.Println(x)
+}
+
+func TestLog(t *testing.T) {
+	s := &s{
+		x: 1,
+		y: 2,
+	}
+	A(s)
+}
+
+func generateTimeOut() time.Duration {
+	return time.Duration(800+rand.Intn(150)) * time.Millisecond
+}
+
+func TestTicker(t *testing.T) {
+	timer := time.NewTimer(10)
+	for i := 0; i < 10; i++ {
+		timer.Reset(generateTimeOut())
+		time.Sleep(900 * time.Millisecond)
+		select {
+		case <-timer.C:
+			fmt.Println("超时")
+		default:
+			fmt.Println("未超时")
+		}
+	}
 }

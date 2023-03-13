@@ -58,44 +58,116 @@ func TestReElection2A(t *testing.T) {
 	cfg.begin("Test (2A): election after network failure")
 
 	leader1 := cfg.checkOneLeader()
-	fmt.Println("第一次检查完成==============================================")
+	PartAInfo("第一次检查完成==============================================")
 	// if the leader disconnects, a new one should be elected.
 	cfg.disconnect(leader1)
-	fmt.Println("上一个leader挂了")
+	PartAInfo("上一个leader挂了")
+	//time.
+	//time.Sleep(time.Second * 10)
 	cfg.checkOneLeader()
-	fmt.Println("第二次检查完成==============================================")
-	fmt.Println("挂掉的leader恢复了")
+	PartAInfo("第二次检查完成==============================================")
+	PartAInfo("挂掉的leader恢复了")
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader. and the old leader
 	// should switch to follower.
 	cfg.connect(leader1)
-	leader2 := cfg.checkOneLeader()
-	fmt.Println("第三次检查完成==============================================")
 
+	time.Sleep(time.Second * 5)
+	leader2 := cfg.checkOneLeader()
+	PartAInfo("第三次检查完成==============================================")
+
+	PartAInfo("挂掉上一个leader还有另外一个节点，此时不应该存在leader")
 	// if there's no quorum, no new leader should
 	// be elected.
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
-	time.Sleep(2 * RaftElectionTimeout)
-
+	//time.Sleep(2 * RaftElectionTimeout)
+	time.Sleep(time.Second * 5)
 	// check that the one connected server
 	// does not think it is the leader.
+	//time.Sleep(time.Second * 10)
 	cfg.checkNoLeader()
-	fmt.Println("第四次检查完成==============================================")
+	PartAInfo("第四次检查完成==============================================")
+
+	PartAInfo("恢复了一个leader，此时存在两个节点，可以有一个leader")
 	// if a quorum arises, it should elect a leader.
 	cfg.connect((leader2 + 1) % servers)
+	//time.Sleep(time.Second * 10)
 	cfg.checkOneLeader()
-	fmt.Println("第五次检查完成==============================================")
-
+	time.Sleep(time.Second * 5)
+	PartAInfo("第五次检查完成==============================================")
+	PartAInfo("全部节点恢复，此时也只能有一个leader")
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
+	//time.Sleep(time.Second * 10)
 	cfg.checkOneLeader()
-	fmt.Println("第六次检查完成==============================================")
-
+	time.Sleep(time.Second * 5)
+	PartAInfo("第六次检查完成==============================================")
 	cfg.end()
 }
 
 func TestManyElections2A(t *testing.T) {
+	servers := 25
+	cfg := make_config(t, servers, false, false)
+	defer cfg.cleanup()
+
+	cfg.begin("Test (2A): multiple elections")
+
+	cfg.checkOneLeader()
+
+	iters := 10
+	for ii := 1; ii < iters; ii++ {
+		// disconnect three nodes
+		i1 := rand.Int() % servers
+		i2 := rand.Int() % servers
+		i3 := rand.Int() % servers
+		i4 := rand.Int() % servers
+		i5 := rand.Int() % servers
+		i6 := rand.Int() % servers
+		i7 := rand.Int() % servers
+		i8 := rand.Int() % servers
+		i9 := rand.Int() % servers
+		i10 := rand.Int() % servers
+		i11 := rand.Int() % servers
+		i12 := rand.Int() % servers
+		cfg.disconnect(i1)
+		cfg.disconnect(i2)
+		cfg.disconnect(i3)
+		cfg.disconnect(i4)
+		cfg.disconnect(i5)
+		cfg.disconnect(i6)
+		cfg.disconnect(i7)
+		cfg.disconnect(i8)
+		cfg.disconnect(i9)
+		cfg.disconnect(i10)
+		cfg.disconnect(i11)
+		cfg.disconnect(i12)
+
+		// either the current leader should still be alive,
+		// or the remaining four should elect a new one.
+		cfg.checkOneLeader()
+
+		cfg.connect(i1)
+		cfg.connect(i2)
+		cfg.connect(i3)
+		cfg.connect(i4)
+		cfg.connect(i5)
+		cfg.connect(i6)
+		cfg.connect(i7)
+		cfg.connect(i8)
+		cfg.connect(i9)
+		cfg.connect(i10)
+		cfg.connect(i11)
+		cfg.connect(i12)
+	}
+
+	cfg.checkOneLeader()
+
+	cfg.end()
+}
+
+func TestManyMany(t *testing.T) {
+	PartAInfo("========================================================================")
 	servers := 7
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -125,7 +197,6 @@ func TestManyElections2A(t *testing.T) {
 
 	cfg.checkOneLeader()
 
-	cfg.end()
 }
 
 func TestBasicAgree2B(t *testing.T) {

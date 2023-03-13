@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"github.com/sasha-s/go-deadlock"
 	"math/rand"
+	"sync"
 	"time"
 
 	"sync/atomic"
@@ -180,9 +181,17 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	PartAInfo(args.CandidateId, "向", rf.me, "征票")
 	reply.Term = rf.term
+	//若当前节点是leader，若对方term大于自己，卸职
+	if rf.status == leader && args.Term > args.Term {
+		fmt.Println(rf.me, "在收到", args.CandidateId, "的征票后卸职")
+		rf.status = follower
+		return
+
+	}
 	//fmt.Println(args.CandidateId, "向", rf.me, "征票")
-	if rf.hasVote && rf.voteCheck() {
+	if rf.hasVote && rf.voteCheck(args.Term, reply.Term) {
 		reply.VoteGranted = true
 		rf.hasVote = false
 	}
@@ -207,55 +216,45 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//首先判读一致性
 	term, isLeader := rf.GetState()
 	reply.Term = term
+	PartAInfo(rf.me, ":", term, " ", args.LeaderId, ":", args.Term)
 	if !rf.appendEntriesCheck(args.Term, term) {
-		fmt.Println(rf.me, "丢弃来自", args.LeaderId, "的包")
+		PartAInfo(rf.me, "丢弃来自", args.LeaderId, "的包")
 		return
 	}
-	if isLeader {
-		fmt.Println("leader", rf.me, "收到心跳包")
-		fmt.Println("发送方", args.LeaderId, "term:", args.Term, " 我", rf.me, "的term:", term)
-	}
 	//当前节点如果是leader，说明此时有两个leader存在
-	if isLeader && term < args.Term {
-		//更新任期
-		rf.mu.Lock()
-		rf.term = args.Term
-		rf.mu.Unlock()
-		//卸职
-		rf.parseRaftStatus(follower)
-		fmt.Println(rf.me, "卸职")
+	if isLeader && term > args.Term {
 		return
 	}
 	rf.mu.Lock()
-	rf.term = args.Term
 	rf.status = follower
+	rf.term = args.Term
 	rf.hasVote = true
 	atomic.StoreInt64(&rf.lastAppend, time.Now().UnixNano()/1e6)
-	fmt.Println(args.LeaderId, "向", rf.me, "发送心跳")
+	PartAInfo(args.LeaderId, "向", rf.me, "发送心跳")
 	rf.mu.Unlock()
 	reply.Success = true
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
-	return ok
+	return rf.peers[server].Call("Raft.AppendEntries", args, reply)
 }
 
-func (rf *Raft) sendRequestVote(server int, replys chan *RequestVoteReply, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	if rf.peers[server].Call("Raft.RequestVote", args, reply) {
-		replys <- reply
-	}
-	return true
+func (rf *Raft) sendRequestVote(send chan bool, server int, args *RequestVoteArgs, reply *RequestVoteReply) {
+	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	send <- ok
 }
 
-func (rf *Raft) appendEntriesCheck(leaderTerm, myTerm int) bool {
-	if myTerm > leaderTerm {
+func (rf *Raft) appendEntriesCheck(leaderTerm, currentTerm int) bool {
+	if currentTerm > leaderTerm {
 		return false
 	}
 	return true
 }
 
-func (rf *Raft) voteCheck() bool {
+func (rf *Raft) voteCheck(senderTerm int, myTerm int) bool {
+	if senderTerm < myTerm {
+		return false
+	}
 	return true
 }
 
@@ -310,7 +309,7 @@ func (rf *Raft) ticker() {
 	for rf.killed() == false {
 		//如果当前节点是follower，更新选票
 		//160ms就会有一次心跳，选举超时时间应远大于160，这里取[500,650]
-		timeout := int64(rand.Intn(150) + 300)
+		timeout := int64(rand.Intn(100) + 800)
 		//当前raft是leader或者选举还未超时
 		interval := time.Now().UnixNano()/1e6 - atomic.LoadInt64(&rf.lastAppend)
 		//fmt.Println("interval:", interval, "timeout", timeout)
@@ -318,76 +317,106 @@ func (rf *Raft) ticker() {
 			//fmt.Println(rf.me, "是leader")
 			time.Sleep(time.Duration(timeout) * time.Millisecond)
 		} else if interval < timeout {
-			fmt.Println(rf.me, "还没有过期")
+			PartAInfo(rf.me, "还没有过期")
 			time.Sleep(time.Duration(timeout-interval) * time.Millisecond)
 		} else {
-			//fmt.Println(rf.me, "开始选举")
-			rf.electLeader()
-			time.Sleep(time.Duration(timeout) * time.Millisecond)
+			//PartAInfo(rf.me, "开始选举")
 			rf.mu.Lock()
 			rf.hasVote = true
 			rf.mu.Unlock()
+			rf.electLeader(timeout)
+			atomic.StoreInt64(&rf.lastAppend, time.Now().UnixNano()/1e6)
 		}
 	}
 
 }
 
-func (rf *Raft) electLeader() {
-	fmt.Println(rf.me, "开始选举")
+func (rf *Raft) electLeader(timeout int64) {
+	PartAInfo(rf.me, "开始选举 term:", rf.term)
 	rf.parseRaftStatus(candidate)
+	PartAInfo(rf.me, ":", rf.term)
 	rf.mu.Lock()
-	rf.term++
 	args := &RequestVoteArgs{CandidateId: rf.me, Term: rf.term}
 	rf.mu.Unlock()
-	successCount := 0 // 被选上的票数
-	//先对自己征票
-	replys := make(chan *RequestVoteReply, len(rf.peers))
+	var successCount int = 0 // 被选上的票数
 	//对其它的节点征票
+	replys := make(chan *RequestVoteReply, len(rf.peers))
+	var wg sync.WaitGroup
 	for i := 0; i < len(rf.peers); i++ {
-		reply := &RequestVoteReply{}
-		go rf.sendRequestVote(i, replys, args, reply)
-	}
-	for i := 0; i < len(rf.peers); i++ {
-		select {
-		case <-time.After(1 * time.Second):
-			fmt.Println("部分网络请求超时")
-		case r := <-replys:
-			if r.VoteGranted {
-				successCount++
+		wg.Add(1)
+		go func(server int, args *RequestVoteArgs) {
+			reply := &RequestVoteReply{}
+			send := make(chan bool)
+			go rf.sendRequestVote(send, server, args, reply)
+			select {
+			case <-time.After(time.Millisecond * 160):
+				PartAInfo(rf.me, "向", server, "发送投票请求网络超时")
+				go func() {
+					<-send
+				}()
+				wg.Done()
+				return
+			case <-send:
 			}
+			replys <- reply
+			wg.Done()
+		}(i, args)
+	}
+	wg.Wait()
+	close(replys)
+	for r := range replys {
+		if r.VoteGranted {
+			successCount++
+		} else if r.Term > args.Term {
+			rf.mu.Lock()
+			rf.term = r.Term
+			rf.mu.Unlock()
+			PartAInfo(rf.me, "任期落后，放弃选票")
+			rf.parseRaftStatus(follower)
+			return
 		}
 	}
-	//如果选票大于等于有效节点个数的一半，成功当选
-	fmt.Println(rf.me, "获得选票数", successCount)
+	//如果选票大于全部节点个数的一半，成功当选
+	PartAInfo(rf.me, "获得选票数", successCount)
 	if successCount > len(rf.peers)/2 {
-		fmt.Println(rf.me, "成功当选leader")
+		PartAInfo(rf.me, "成功当选leader", rf.me, ":", rf.term)
 		rf.parseRaftStatus(leader)
 		go rf.heartBeat()
+	} else {
+		rf.parseRaftStatus(follower)
 	}
 }
 
 func (rf *Raft) heartBeat() {
 	//每个160ms发送一次心跳包
 	for rf.killed() == false {
-		term, _ := rf.GetState()
+		term, isLeader := rf.GetState()
+		if !isLeader {
+			break
+		}
 		args := &AppendEntriesArgs{Term: term, LeaderId: rf.me}
 		for i := 0; i < len(rf.peers); i++ {
 			if i == rf.me {
 				continue
 			}
-			reply := &AppendEntriesReply{}
-			if !rf.sendAppendEntries(i, args, reply) {
-				fmt.Println("心跳失败")
-				continue
-			}
-			if !reply.Success && term < reply.Term {
-				//心跳失败，可能原因就是自己的term落后，此时1应该更新term并且有由leader变为follower
-				rf.term = reply.Term
-				rf.parseRaftStatus(follower)
-				return
-			}
+			go func(server int, args *AppendEntriesArgs) {
+				reply := &AppendEntriesReply{}
+				if !rf.sendAppendEntries(server, args, reply) {
+					//PartAInfo(rf.me, "向", server, "发送心跳失败")
+					return
+				}
+				if !reply.Success && reply.Term > term {
+					//此leader已经落后于其它leader
+					PartAInfo(rf.me, "卸职")
+					rf.parseRaftStatus(follower)
+					rf.mu.Lock()
+					rf.term = reply.Term
+					rf.mu.Unlock()
+					return
+				}
+			}(i, args)
 		}
-		time.Sleep(160 * time.Millisecond)
+		time.Sleep(time.Millisecond * 160)
 	}
 }
 
@@ -404,7 +433,7 @@ func (rf *Raft) heartBeat() {
 //
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
-	fmt.Println("创建raft节点", me)
+	PartAInfo("创建raft节点", me)
 	//fmt.Println("me:", me, "persister", *persister)
 	rf := &Raft{}
 	rf.peers = peers
@@ -428,7 +457,19 @@ func Make(peers []*labrpc.ClientEnd, me int,
 func (rf *Raft) parseRaftStatus(status RaftStatus) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.status = status
+	switch status {
+	case rf.status:
+		return
+	case follower:
+		rf.status = follower
+		rf.hasVote = true
+		atomic.StoreInt64(&rf.lastAppend, time.Now().UnixNano()/1e6)
+	case leader:
+		rf.status = leader
+	case candidate:
+		rf.term++
+		rf.status = candidate
+	}
 }
 
 func (rf *Raft) getStatus() RaftStatus {

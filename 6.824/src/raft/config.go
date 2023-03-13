@@ -8,7 +8,9 @@ package raft
 // test with the original before submitting.
 //
 
-import "6.824/labgob"
+import (
+	"6.824/labgob"
+)
 import "6.824/labrpc"
 import "bytes"
 import "log"
@@ -359,7 +361,7 @@ func (cfg *config) cleanup() {
 // attach server i to the net.
 func (cfg *config) connect(i int) {
 	// fmt.Printf("connect(%d)\n", i)
-
+	PartAInfo(i, "即将恢复连接")
 	cfg.connected[i] = true
 
 	// outgoing ClientEnds
@@ -381,6 +383,7 @@ func (cfg *config) connect(i int) {
 
 // detach server i from the net.
 func (cfg *config) disconnect(i int) {
+	PartAInfo(i, "马上被挂掉")
 	// fmt.Printf("disconnect(%d)\n", i)
 
 	cfg.connected[i] = false
