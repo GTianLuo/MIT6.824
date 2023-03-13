@@ -20,6 +20,7 @@ package raft
 import (
 	"fmt"
 	"github.com/sasha-s/go-deadlock"
+	"log"
 	"math/rand"
 	"sync"
 	"time"
@@ -65,15 +66,15 @@ const (
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu         deadlock.Mutex      // Lock to protect shared access to this peer's state
-	peers      []*labrpc.ClientEnd // RPC end points of all peers
-	persister  *Persister          // Object to hold this peer's persisted state
-	me         int                 // this peer's index into peers[]
-	dead       int32               // set by Kill()
-	term       int                 // 当前任期
-	status     RaftStatus
-	lastAppend int64 //上一次追加日志的时间
-	hasVote    bool
+	mu        deadlock.Mutex      // Lock to protect shared access to this peer's state
+	peers     []*labrpc.ClientEnd // RPC end points of all peers
+	persister *Persister          // Object to hold this peer's persisted state
+	me        int                 // this peer's index into peers[]
+	dead      int32               // set by Kill()
+	term      int                 // 当前任期
+	status    RaftStatus
+	timer     *time.Timer
+	hasVote   bool
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
@@ -92,6 +93,10 @@ func (rf *Raft) GetState() (int, bool) {
 	isLeader := rf.status == leader
 	// Your code here (2A).
 	return term, isLeader
+}
+
+func generateTimeOut() time.Duration {
+	return time.Duration(800+rand.Intn(150)) * time.Millisecond
 }
 
 //
@@ -229,7 +234,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.status = follower
 	rf.term = args.Term
 	rf.hasVote = true
-	atomic.StoreInt64(&rf.lastAppend, time.Now().UnixNano()/1e6)
+	rf.timer.Reset(generateTimeOut())
 	PartAInfo(args.LeaderId, "向", rf.me, "发送心跳")
 	rf.mu.Unlock()
 	reply.Success = true
@@ -305,33 +310,27 @@ func (rf *Raft) killed() bool {
 
 // The ticker go routine starts a new election if this peer hasn't received
 // heartsbeats recently.
+
 func (rf *Raft) ticker() {
 	for rf.killed() == false {
-		//如果当前节点是follower，更新选票
-		//160ms就会有一次心跳，选举超时时间应远大于160，这里取[500,650]
-		timeout := int64(rand.Intn(100) + 800)
-		//当前raft是leader或者选举还未超时
-		interval := time.Now().UnixNano()/1e6 - atomic.LoadInt64(&rf.lastAppend)
-		//fmt.Println("interval:", interval, "timeout", timeout)
-		if rf.getStatus() == leader {
-			//fmt.Println(rf.me, "是leader")
-			time.Sleep(time.Duration(timeout) * time.Millisecond)
-		} else if interval < timeout {
-			PartAInfo(rf.me, "还没有过期")
-			time.Sleep(time.Duration(timeout-interval) * time.Millisecond)
-		} else {
+		rf.timer.Reset(generateTimeOut())
+		<-rf.timer.C
+		switch rf.getStatus() {
+		case leader:
+			continue
+		case follower:
 			//PartAInfo(rf.me, "开始选举")
 			rf.mu.Lock()
 			rf.hasVote = true
 			rf.mu.Unlock()
-			rf.electLeader(timeout)
-			atomic.StoreInt64(&rf.lastAppend, time.Now().UnixNano()/1e6)
+			rf.electLeader()
+		default:
+			log.Println("invalid raft status")
 		}
 	}
-
 }
 
-func (rf *Raft) electLeader(timeout int64) {
+func (rf *Raft) electLeader() {
 	PartAInfo(rf.me, "开始选举 term:", rf.term)
 	rf.parseRaftStatus(candidate)
 	PartAInfo(rf.me, ":", rf.term)
@@ -441,7 +440,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.me = me
 	rf.hasVote = true
 	rf.status = follower
-	atomic.StoreInt64(&rf.lastAppend, time.Now().UnixNano()/1e6)
+	rf.timer = time.NewTimer(generateTimeOut())
 
 	// Your initialization code here (2A, 2B, 2C).
 
@@ -463,7 +462,7 @@ func (rf *Raft) parseRaftStatus(status RaftStatus) {
 	case follower:
 		rf.status = follower
 		rf.hasVote = true
-		atomic.StoreInt64(&rf.lastAppend, time.Now().UnixNano()/1e6)
+		rf.timer.Reset(generateTimeOut())
 	case leader:
 		rf.status = leader
 	case candidate:

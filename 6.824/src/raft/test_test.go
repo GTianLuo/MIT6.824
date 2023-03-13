@@ -72,7 +72,7 @@ func TestReElection2A(t *testing.T) {
 	// should switch to follower.
 	cfg.connect(leader1)
 
-	time.Sleep(time.Second * 5)
+	//time.Sleep(time.Second * 5)
 	leader2 := cfg.checkOneLeader()
 	PartAInfo("第三次检查完成==============================================")
 
@@ -82,7 +82,7 @@ func TestReElection2A(t *testing.T) {
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
 	//time.Sleep(2 * RaftElectionTimeout)
-	time.Sleep(time.Second * 5)
+	time.Sleep(2 * RaftElectionTimeout)
 	// check that the one connected server
 	// does not think it is the leader.
 	//time.Sleep(time.Second * 10)
@@ -94,20 +94,19 @@ func TestReElection2A(t *testing.T) {
 	cfg.connect((leader2 + 1) % servers)
 	//time.Sleep(time.Second * 10)
 	cfg.checkOneLeader()
-	time.Sleep(time.Second * 5)
+	//time.Sleep(time.Second * 5)
 	PartAInfo("第五次检查完成==============================================")
 	PartAInfo("全部节点恢复，此时也只能有一个leader")
 	// re-join of last node shouldn't prevent leader from existing.
 	cfg.connect(leader2)
 	//time.Sleep(time.Second * 10)
 	cfg.checkOneLeader()
-	time.Sleep(time.Second * 5)
-	PartAInfo("第六次检查完成==============================================")
+	//PartAInfo("第六次检查完成==============================================")
 	cfg.end()
 }
 
 func TestManyElections2A(t *testing.T) {
-	servers := 25
+	servers := 7
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
 
@@ -121,27 +120,9 @@ func TestManyElections2A(t *testing.T) {
 		i1 := rand.Int() % servers
 		i2 := rand.Int() % servers
 		i3 := rand.Int() % servers
-		i4 := rand.Int() % servers
-		i5 := rand.Int() % servers
-		i6 := rand.Int() % servers
-		i7 := rand.Int() % servers
-		i8 := rand.Int() % servers
-		i9 := rand.Int() % servers
-		i10 := rand.Int() % servers
-		i11 := rand.Int() % servers
-		i12 := rand.Int() % servers
 		cfg.disconnect(i1)
 		cfg.disconnect(i2)
 		cfg.disconnect(i3)
-		cfg.disconnect(i4)
-		cfg.disconnect(i5)
-		cfg.disconnect(i6)
-		cfg.disconnect(i7)
-		cfg.disconnect(i8)
-		cfg.disconnect(i9)
-		cfg.disconnect(i10)
-		cfg.disconnect(i11)
-		cfg.disconnect(i12)
 
 		// either the current leader should still be alive,
 		// or the remaining four should elect a new one.
@@ -150,15 +131,6 @@ func TestManyElections2A(t *testing.T) {
 		cfg.connect(i1)
 		cfg.connect(i2)
 		cfg.connect(i3)
-		cfg.connect(i4)
-		cfg.connect(i5)
-		cfg.connect(i6)
-		cfg.connect(i7)
-		cfg.connect(i8)
-		cfg.connect(i9)
-		cfg.connect(i10)
-		cfg.connect(i11)
-		cfg.connect(i12)
 	}
 
 	cfg.checkOneLeader()

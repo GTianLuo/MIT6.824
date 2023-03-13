@@ -2,7 +2,6 @@ package raft
 
 import (
 	"fmt"
-	"math/rand"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -49,20 +48,12 @@ func TestLog(t *testing.T) {
 	A(s)
 }
 
-func generateTimeOut() time.Duration {
-	return time.Duration(800+rand.Intn(150)) * time.Millisecond
-}
-
 func TestTicker(t *testing.T) {
 	timer := time.NewTimer(10)
 	for i := 0; i < 10; i++ {
-		timer.Reset(generateTimeOut())
-		time.Sleep(900 * time.Millisecond)
-		select {
-		case <-timer.C:
-			fmt.Println("超时")
-		default:
-			fmt.Println("未超时")
-		}
+		//timer.Reset(generateTimeOut())
+		//time.Sleep(900 * time.Millisecond)
+		<-timer.C
+		fmt.Println("超时")
 	}
 }
