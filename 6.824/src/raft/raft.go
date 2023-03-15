@@ -41,7 +41,7 @@ import (
 // in part 2D you'll want to send other kinds of messages (e.g.,
 // snapshots) on the applyCh, but set CommandValid to false for these
 // other uses.
-//
+//`
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
@@ -72,6 +72,7 @@ type Raft struct {
 	me        int                 // this peer's index into peers[]
 	dead      int32               // set by Kill()
 	term      int                 // 当前任期
+	applyCh   chan ApplyMsg
 	status    RaftStatus
 	timer     *time.Timer
 	hasVote   bool
@@ -193,12 +194,13 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		fmt.Println(rf.me, "在收到", args.CandidateId, "的征票后卸职")
 		rf.status = follower
 		return
-
 	}
 	//fmt.Println(args.CandidateId, "向", rf.me, "征票")
 	if rf.hasVote && rf.voteCheck(args.Term, reply.Term) {
+		reply.Term = args.Term
 		reply.VoteGranted = true
 		rf.hasVote = false
+		rf.applyCh <- ApplyMsg{}
 	}
 }
 
@@ -263,20 +265,7 @@ func (rf *Raft) voteCheck(senderTerm int, myTerm int) bool {
 	return true
 }
 
-//
-// the service using Raft (e.g. a k/v server) wants to start
-// agreement on the next command to be appended to Raft's log. if this
-// server isn't the leader, returns false. otherwise start the
-// agreement and return immediately. there is no guarantee that this
-// command will ever be committed to the Raft log, since the leader
-// may fail or lose an election. even if the Raft instance has been killed,
-// this function should return gracefully.
-//
-// the first return value is the index that the command will appear at
-// if it's ever committed. the second return value is the current
-// term. the third return value is true if this server believes it is
-// the leader.
-//
+// Start 附加命令到日志中，第一个返回值是日志被附加到的位置(索引值)，第二节返回值是当前节点的任期，第三个返回值表示当前节点是否是leader
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
 	term := -1
@@ -441,7 +430,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.hasVote = true
 	rf.status = follower
 	rf.timer = time.NewTimer(generateTimeOut())
-
+	rf.applyCh = applyCh
 	// Your initialization code here (2A, 2B, 2C).
 
 	// initialize from state persisted before a crash
