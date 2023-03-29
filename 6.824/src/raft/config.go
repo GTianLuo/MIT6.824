@@ -278,7 +278,6 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 //
 func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 	cfg.crash1(i)
-
 	// a fresh set of outgoing ClientEnd names.
 	// so that old crashed instance's ClientEnds can't send.
 	cfg.endnames[i] = make([]string, cfg.n)
@@ -328,7 +327,6 @@ func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 	cfg.mu.Unlock()
 
 	go applier(i, applyCh)
-
 	svc := labrpc.MakeService(rf)
 	srv := labrpc.MakeServer()
 	srv.AddService(svc)
@@ -383,7 +381,7 @@ func (cfg *config) connect(i int) {
 
 // detach server i from the net.
 func (cfg *config) disconnect(i int) {
-	PartAInfo(i, "马上被挂掉")
+	PartBInfo(i, "马上被挂掉")
 	// fmt.Printf("disconnect(%d)\n", i)
 
 	cfg.connected[i] = false
@@ -595,6 +593,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 				nd, cmd1 := cfg.nCommitted(index)
 				if nd > 0 && nd >= expectedServers {
 					// committed
+					PartBInfo("cmd:", cmd, "  cmd1:", cmd1)
 					if cmd1 == cmd {
 						// and it was the command we submitted.
 						return index

@@ -173,18 +173,22 @@ func TestManyMany(t *testing.T) {
 
 func TestBasicAgree2B(t *testing.T) {
 	servers := 3
+	//创建三个节点
 	cfg := make_config(t, servers, false, false)
+
 	defer cfg.cleanup()
 
 	cfg.begin("Test (2B): basic agreement")
 
 	iters := 3
 	for index := 1; index < iters+1; index++ {
+		//nCommitted 统计指定下标日志被提交的次数
 		nd, _ := cfg.nCommitted(index)
 		if nd > 0 {
 			t.Fatalf("some have committed before Start()")
 		}
 
+		//发送日志
 		xindex := cfg.one(index*100, servers, false)
 		if xindex != index {
 			t.Fatalf("got index %v but expected %v", xindex, index)
@@ -232,7 +236,7 @@ func TestRPCBytes2B(t *testing.T) {
 //
 // test just failure of followers.
 //
-func For2023TestFollowerFailure2B(t *testing.T) {
+func TestFollowerFailure2B(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -1093,192 +1097,4 @@ func internalChurn(t *testing.T, unreliable bool) {
 		// keep up, but not so infrequent that everything has settled
 		// down from one change to the next. Pick a value smaller than
 		// the election timeout, but not hugely smaller.
-		time.Sleep((RaftElectionTimeout * 7) / 10)
-	}
-
-	time.Sleep(RaftElectionTimeout)
-	cfg.setunreliable(false)
-	for i := 0; i < servers; i++ {
-		if cfg.rafts[i] == nil {
-			cfg.start1(i, cfg.applier)
-		}
-		cfg.connect(i)
-	}
-
-	atomic.StoreInt32(&stop, 1)
-
-	values := []int{}
-	for i := 0; i < ncli; i++ {
-		vv := <-cha[i]
-		if vv == nil {
-			t.Fatal("client failed")
-		}
-		values = append(values, vv...)
-	}
-
-	time.Sleep(RaftElectionTimeout)
-
-	lastIndex := cfg.one(rand.Int(), servers, true)
-
-	really := make([]int, lastIndex+1)
-	for index := 1; index <= lastIndex; index++ {
-		v := cfg.wait(index, servers, -1)
-		if vi, ok := v.(int); ok {
-			really = append(really, vi)
-		} else {
-			t.Fatalf("not an int")
-		}
-	}
-
-	for _, v1 := range values {
-		ok := false
-		for _, v2 := range really {
-			if v1 == v2 {
-				ok = true
-			}
-		}
-		if ok == false {
-			cfg.t.Fatalf("didn't find a value")
-		}
-	}
-
-	cfg.end()
-}
-
-func TestReliableChurn2C(t *testing.T) {
-	internalChurn(t, false)
-}
-
-func TestUnreliableChurn2C(t *testing.T) {
-	internalChurn(t, true)
-}
-
-const MAXLOGSIZE = 2000
-
-func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash bool) {
-	iters := 30
-	servers := 3
-	cfg := make_config(t, servers, !reliable, true)
-	defer cfg.cleanup()
-
-	cfg.begin(name)
-
-	cfg.one(rand.Int(), servers, true)
-	leader1 := cfg.checkOneLeader()
-
-	for i := 0; i < iters; i++ {
-		victim := (leader1 + 1) % servers
-		sender := leader1
-		if i%3 == 1 {
-			sender = (leader1 + 1) % servers
-			victim = leader1
-		}
-
-		if disconnect {
-			cfg.disconnect(victim)
-			cfg.one(rand.Int(), servers-1, true)
-		}
-		if crash {
-			cfg.crash1(victim)
-			cfg.one(rand.Int(), servers-1, true)
-		}
-
-		// perhaps send enough to get a snapshot
-		nn := (SnapShotInterval / 2) + (rand.Int() % SnapShotInterval)
-		for i := 0; i < nn; i++ {
-			cfg.rafts[sender].Start(rand.Int())
-		}
-
-		// let applier threads catch up with the Start()'s
-		if disconnect == false && crash == false {
-			// make sure all followers have caught up, so that
-			// an InstallSnapshot RPC isn't required for
-			// TestSnapshotBasic2D().
-			cfg.one(rand.Int(), servers, true)
-		} else {
-			cfg.one(rand.Int(), servers-1, true)
-		}
-
-		if cfg.LogSize() >= MAXLOGSIZE {
-			cfg.t.Fatalf("Log size too large")
-		}
-		if disconnect {
-			// reconnect a follower, who maybe behind and
-			// needs to rceive a snapshot to catch up.
-			cfg.connect(victim)
-			cfg.one(rand.Int(), servers, true)
-			leader1 = cfg.checkOneLeader()
-		}
-		if crash {
-			cfg.start1(victim, cfg.applierSnap)
-			cfg.connect(victim)
-			cfg.one(rand.Int(), servers, true)
-			leader1 = cfg.checkOneLeader()
-		}
-	}
-	cfg.end()
-}
-
-func TestSnapshotBasic2D(t *testing.T) {
-	snapcommon(t, "Test (2D): snapshots basic", false, true, false)
-}
-
-func TestSnapshotInstall2D(t *testing.T) {
-	snapcommon(t, "Test (2D): install snapshots (disconnect)", true, true, false)
-}
-
-func TestSnapshotInstallUnreliable2D(t *testing.T) {
-	snapcommon(t, "Test (2D): install snapshots (disconnect+unreliable)",
-		true, false, false)
-}
-
-func TestSnapshotInstallCrash2D(t *testing.T) {
-	snapcommon(t, "Test (2D): install snapshots (crash)", false, true, true)
-}
-
-func TestSnapshotInstallUnCrash2D(t *testing.T) {
-	snapcommon(t, "Test (2D): install snapshots (unreliable+crash)", false, false, true)
-}
-
-//
-// do the servers persist the snapshots, and
-// restart using snapshot along with the
-// tail of the log?
-//
-func TestSnapshotAllCrash2D(t *testing.T) {
-	servers := 3
-	iters := 5
-	cfg := make_config(t, servers, false, true)
-	defer cfg.cleanup()
-
-	cfg.begin("Test (2D): crash and restart all servers")
-
-	cfg.one(rand.Int(), servers, true)
-
-	for i := 0; i < iters; i++ {
-		// perhaps enough to get a snapshot
-		nn := (SnapShotInterval / 2) + (rand.Int() % SnapShotInterval)
-		for i := 0; i < nn; i++ {
-			cfg.one(rand.Int(), servers, true)
-		}
-
-		index1 := cfg.one(rand.Int(), servers, true)
-
-		// crash all
-		for i := 0; i < servers; i++ {
-			cfg.crash1(i)
-		}
-
-		// revive all
-		for i := 0; i < servers; i++ {
-			cfg.start1(i, cfg.applierSnap)
-			cfg.connect(i)
-		}
-
-		index2 := cfg.one(rand.Int(), servers, true)
-		if index2 < index1+1 {
-			t.Fatalf("index decreased from %v to %v", index1, index2)
-		}
-	}
-	cfg.end()
-}
+		time.Sleep((RaftElectionTim

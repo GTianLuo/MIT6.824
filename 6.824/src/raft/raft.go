@@ -18,6 +18,7 @@ package raft
 //
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/sasha-s/go-deadlock"
 	"log"
@@ -27,7 +28,6 @@ import (
 
 	"sync/atomic"
 
-	//	"6.824/labgob"
 	"6.824/labrpc"
 )
 
@@ -66,23 +66,31 @@ const (
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu        deadlock.Mutex      // Lock to protect shared access to this peer's state
-	peers     []*labrpc.ClientEnd // RPC end points of all peers
-	persister *Persister          // Object to hold this peer's persisted state
-	me        int                 // this peer's index into peers[]
-	dead      int32               // set by Kill()
-	term      int                 // 当前任期
-	applyCh   chan ApplyMsg
-	status    RaftStatus
-	timer     *time.Timer
-	hasVote   bool
+	mu          deadlock.Mutex      // Lock to protect shared access to this peer's state
+	peers       []*labrpc.ClientEnd // RPC end points of all peers
+	persister   *Persister          // Object to hold this peer's persisted state
+	me          int                 // this peer's index into peers[]
+	dead        int32               // set by Kill()
+	term        int                 // 当前任期
+	applyCh     chan ApplyMsg
+	status      RaftStatus
+	timer       *time.Timer
+	hasVote     bool
+	rlogs       []rlog //当前节点的日志
+	commitIndex int    //提交到的索引
+	lastApplied int    //下次追加条目的索引
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
 }
 
-type Entry []byte
+type rlog struct {
+	term  int
+	entry interface{}
+}
+
+//var heartBeatEntry = Entry{}
 
 // return currentTerm and whether this server
 // believes it is the leader.
@@ -196,22 +204,35 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 	//fmt.Println(args.CandidateId, "向", rf.me, "征票")
-	if rf.hasVote && rf.voteCheck(args.Term, reply.Term) {
+	if rf.hasVote && (args.LastLogTerm == -1 || rf.voteCheck(args.Term, rf.rlogs[rf.lastApplied-1].term, rf.lastApplied-1, args)) {
 		reply.Term = args.Term
 		reply.VoteGranted = true
 		rf.hasVote = false
-		rf.applyCh <- ApplyMsg{}
 	}
+}
+
+func (rf *Raft) voteCheck(term int, lastAppendTerm int, lastAppendIndex int, args *RequestVoteArgs) bool {
+	//对方任期小于自己，拒绝投
+	//只有对方的日志比自己新才能当选leader
+	//1.对方上一条日志任期号小于自己   拒绝投票
+	//2. 对方上一条日志任期号大于自己   投票
+	//3. 对方上一条日志任期号等于自己  判断日志索引，索引大的日志更新
+	if args.Term > term || lastAppendTerm > args.LastLogTerm || lastAppendIndex > args.LastLogIndex {
+		return false
+	}
+	return true
 }
 
 //附加日志RPC/心跳检测
 type AppendEntriesArgs struct {
-	Term         int     //领导人任期号
-	LeaderId     int     //领导人Id
-	PrevLogIndex int     //领导人前一个日志下标
-	PrevLogTerm  int     //领导人前一个日志的任期
-	Entries      []Entry //日志
-	LeaderCommit int     //领导人已经提交的日志索引值
+	Term         int         //领导人任期号
+	LeaderId     int         //领导人Id
+	PrevLogIndex int         //领导人前一个日志下标
+	PrevLogTerm  int         //领导人前一个日志的任期
+	Entries      interface{} //日志
+	LeaderCommit int         //领导人已经提交的日志索引值
+	NextLogIndex int         //节点附加日志的下标
+	NextLogTerm  int         //节点附加日志的任期
 }
 
 type AppendEntriesReply struct {
@@ -229,9 +250,22 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		return
 	}
 	//当前节点如果是leader，说明此时有两个leader存在
-	if isLeader && term > args.Term {
+	if isLeader && term < args.Term {
+		//卸职
+		PartAInfo(rf.me, "卸职")
 		return
 	}
+	//心跳包
+	if args.Entries == nil {
+		//		PartBInfo(rf.me, "收到心跳包")
+		rf.handleHeartBeat(args, reply)
+	} else {
+		//		PartBInfo(rf.me, "收到日志包")
+		rf.handleAppendEntries(args, reply)
+	}
+}
+
+func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	rf.status = follower
 	rf.term = args.Term
@@ -239,7 +273,29 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.timer.Reset(generateTimeOut())
 	PartAInfo(args.LeaderId, "向", rf.me, "发送心跳")
 	rf.mu.Unlock()
+	if rf.commitIndex < args.LeaderCommit {
+		rf.commitEntry(args.LeaderCommit)
+	}
 	reply.Success = true
+}
+
+func (rf *Raft) handleAppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	rf.mu.Lock()
+	PartBInfo(rf.me, "追加来自", args.LeaderId, "的日志")
+	reply.Term = rf.term
+	rf.mu.Unlock()
+	if args.NextLogIndex <= rf.lastApplied {
+		rl := rlog{
+			term:  args.NextLogTerm,
+			entry: args.Entries,
+		}
+		rf.appendRLog(rl, args.NextLogIndex)
+		rf.lastApplied = args.NextLogIndex + 1
+		reply.Success = true
+	} else if args.NextLogIndex > rf.lastApplied {
+		reply.Success = false
+	}
+
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -258,22 +314,103 @@ func (rf *Raft) appendEntriesCheck(leaderTerm, currentTerm int) bool {
 	return true
 }
 
-func (rf *Raft) voteCheck(senderTerm int, myTerm int) bool {
-	if senderTerm < myTerm {
-		return false
+func marshal(i interface{}) []byte {
+	bytes, err := json.Marshal(i)
+	if err != nil {
+		panic("raft:marshal:" + err.Error())
 	}
-	return true
+	return bytes
+}
+
+/*
+func unMarshal(bytes interface{})interface{}{
+	json.
+}
+*/
+func (rf *Raft) appendRLog(rl rlog, index int) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	if len(rf.rlogs) <= index {
+		//这一步只是起到扩容的作用，追加entry在这里只是为了占位，没有意义
+		rf.rlogs = append(rf.rlogs, rl)
+	}
+	rf.rlogs[index] = rl
+}
+
+func (rf *Raft) leaderAppend(command interface{}, index int, term int) {
+
+	PartBInfo("leader:", rf.me, " ", "追加日志 ", index)
+	//entry := marshal(command)
+	rl := rlog{
+		term:  term,
+		entry: command,
+	}
+
+	rf.appendRLog(rl, index)
+	rf.mu.Lock()
+	args := &AppendEntriesArgs{
+		Term:         rf.term,
+		LeaderId:     rf.me,
+		LeaderCommit: rf.commitIndex,
+		NextLogIndex: index,
+		NextLogTerm:  term,
+		Entries:      command,
+	}
+	rf.mu.Unlock()
+	successAppend := 1
+	for i := 0; i < len(rf.peers); i++ {
+		if i == rf.me {
+			continue
+		}
+		reply := &AppendEntriesReply{}
+		if !rf.sendAppendEntries(i, args, reply) {
+			PartBInfo(rf.me, "向", i, "追加日志超时")
+		}
+		if reply.Success {
+			successAppend++
+		} else if reply.Term > args.Term {
+			rf.mu.Lock()
+			rf.status = follower
+			rf.hasVote = true
+			rf.term = args.Term
+			rf.mu.Unlock()
+			return
+		}
+	}
+	if successAppend > len(rf.peers)/2 {
+		rf.commitEntry(index)
+	}
+}
+
+func (rf *Raft) commitEntry(index int) {
+	//	PartBInfo("index:", index, "  ", "commitIndex:", rf.commitIndex)
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	for i := rf.commitIndex + 1; i <= index; i++ {
+		rlog := rf.rlogs[i]
+		applyMsg := ApplyMsg{
+			Command:      rlog.entry,
+			CommandValid: true,
+			CommandIndex: i + 1,
+		}
+		PartBInfo(rf.me, "提交日志：", i+1)
+		rf.applyCh <- applyMsg
+	}
+	rf.commitIndex = index
 }
 
 // Start 附加命令到日志中，第一个返回值是日志被附加到的位置(索引值)，第二节返回值是当前节点的任期，第三个返回值表示当前节点是否是leader
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
-
-	// Your code here (2B).
-
-	return index, term, isLeader
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	isLeader := rf.status == leader
+	index := rf.lastApplied
+	term := rf.term
+	if isLeader {
+		go rf.leaderAppend(command, index, term)
+		rf.lastApplied++
+	}
+	return index + 1, term, isLeader
 }
 
 //
@@ -324,7 +461,15 @@ func (rf *Raft) electLeader() {
 	rf.parseRaftStatus(candidate)
 	PartAInfo(rf.me, ":", rf.term)
 	rf.mu.Lock()
-	args := &RequestVoteArgs{CandidateId: rf.me, Term: rf.term}
+	args := &RequestVoteArgs{
+		CandidateId:  rf.me,
+		Term:         rf.term,
+		LastLogIndex: rf.lastApplied - 1,
+		LastLogTerm:  -1,
+	}
+	if rf.lastApplied != 0 {
+		args.LastLogTerm = rf.rlogs[rf.lastApplied-1].term
+	}
 	rf.mu.Unlock()
 	var successCount int = 0 // 被选上的票数
 	//对其它的节点征票
@@ -382,7 +527,9 @@ func (rf *Raft) heartBeat() {
 		if !isLeader {
 			break
 		}
-		args := &AppendEntriesArgs{Term: term, LeaderId: rf.me}
+		rf.mu.Lock()
+		args := &AppendEntriesArgs{Term: term, LeaderId: rf.me, LeaderCommit: rf.commitIndex}
+		rf.mu.Unlock()
 		for i := 0; i < len(rf.peers); i++ {
 			if i == rf.me {
 				continue
@@ -431,6 +578,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.status = follower
 	rf.timer = time.NewTimer(generateTimeOut())
 	rf.applyCh = applyCh
+	rf.commitIndex = -1
 	// Your initialization code here (2A, 2B, 2C).
 
 	// initialize from state persisted before a crash
