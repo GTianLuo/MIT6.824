@@ -236,11 +236,17 @@ type AppendEntriesArgs struct {
 }
 
 type AppendEntriesReply struct {
-	Term    int  //follow的任期
-	Success bool //是否在follow上更新成功
+	Term            int  //follow的任期
+	Success         bool //是否在follow上更新成功
+	NeedAppendIndex int  //follower日志落后太多时，需要通过该字段告知leader
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+
+	//发送日志的leader只有两种情况
+	//1. 正常运行的leader发送追加日志请求
+	//2. 网络分区的leader发送日志请求，但是网络分区的leader一定任期落后
+	//所以这里只需要判断任期号就行
 	//首先判读一致性
 	term, isLeader := rf.GetState()
 	reply.Term = term
@@ -280,20 +286,24 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 }
 
 func (rf *Raft) handleAppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+
 	rf.mu.Lock()
-	PartBInfo(rf.me, "追加来自", args.LeaderId, "的日志")
 	reply.Term = rf.term
 	rf.mu.Unlock()
 	if args.NextLogIndex <= rf.lastApplied {
+		PartBInfo(rf.me, "追加来自", args.LeaderId, "的日志", args.NextLogIndex+1)
 		rl := rlog{
 			term:  args.NextLogTerm,
 			entry: args.Entries,
 		}
 		rf.appendRLog(rl, args.NextLogIndex)
+		rf.mu.Lock()
 		rf.lastApplied = args.NextLogIndex + 1
+		rf.mu.Unlock()
 		reply.Success = true
 	} else if args.NextLogIndex > rf.lastApplied {
 		reply.Success = false
+		reply.NeedAppendIndex = rf.lastApplied
 	}
 
 }
@@ -330,16 +340,18 @@ func unMarshal(bytes interface{})interface{}{
 func (rf *Raft) appendRLog(rl rlog, index int) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if len(rf.rlogs) <= index {
+	for len(rf.rlogs) <= index {
 		//这一步只是起到扩容的作用，追加entry在这里只是为了占位，没有意义
+		//		PartBInfo("len:", len(rf.rlogs), " index:", index)
 		rf.rlogs = append(rf.rlogs, rl)
 	}
+	//	PartBInfo("len:", len(rf.rlogs), " index:", index)
 	rf.rlogs[index] = rl
 }
 
 func (rf *Raft) leaderAppend(command interface{}, index int, term int) {
 
-	PartBInfo("leader:", rf.me, " ", "追加日志 ", index)
+	PartBInfo("leader:", rf.me, " ", "追加日志 ", index+1)
 	//entry := marshal(command)
 	rl := rlog{
 		term:  term,
@@ -357,27 +369,46 @@ func (rf *Raft) leaderAppend(command interface{}, index int, term int) {
 		Entries:      command,
 	}
 	rf.mu.Unlock()
-	successAppend := 1
+	var successAppend int32 = 1
 	for i := 0; i < len(rf.peers); i++ {
 		if i == rf.me {
 			continue
 		}
-		reply := &AppendEntriesReply{}
-		if !rf.sendAppendEntries(i, args, reply) {
-			PartBInfo(rf.me, "向", i, "追加日志超时")
-		}
-		if reply.Success {
-			successAppend++
-		} else if reply.Term > args.Term {
-			rf.mu.Lock()
-			rf.status = follower
-			rf.hasVote = true
-			rf.term = args.Term
-			rf.mu.Unlock()
-			return
-		}
+		go func(server int, args *AppendEntriesArgs) {
+			reply := &AppendEntriesReply{}
+			if !rf.sendAppendEntries(server, args, reply) {
+				PartBInfo(rf.me, "向", server, "追加日志超时")
+			}
+			if reply.Success {
+				atomic.AddInt32(&successAppend, 1)
+			} else if reply.Term > args.Term {
+				rf.mu.Lock()
+				rf.status = follower
+				rf.hasVote = true
+				rf.term = args.Term
+				rf.mu.Unlock()
+				return
+			} else {
+				//follower日志落后太多
+				for i := reply.NeedAppendIndex; i <= args.NextLogIndex; i++ {
+					rf.mu.Lock()
+					reply := &AppendEntriesReply{}
+					args := &AppendEntriesArgs{
+						Term:         rf.term,
+						LeaderId:     rf.me,
+						LeaderCommit: rf.commitIndex,
+						NextLogIndex: i,
+						NextLogTerm:  rf.rlogs[i].term,
+						Entries:      rf.rlogs[i].entry,
+					}
+					rf.sendAppendEntries(server, args, reply)
+					rf.mu.Unlock()
+				}
+			}
+		}(i, args)
 	}
-	if successAppend > len(rf.peers)/2 {
+	time.Sleep(time.Millisecond * 400)
+	if atomic.LoadInt32(&successAppend) > int32(len(rf.peers)/2) {
 		rf.commitEntry(index)
 	}
 }
@@ -386,6 +417,9 @@ func (rf *Raft) commitEntry(index int) {
 	//	PartBInfo("index:", index, "  ", "commitIndex:", rf.commitIndex)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	if rf.lastApplied-1 < index {
+		index = rf.lastApplied - 1
+	}
 	for i := rf.commitIndex + 1; i <= index; i++ {
 		rlog := rf.rlogs[i]
 		applyMsg := ApplyMsg{

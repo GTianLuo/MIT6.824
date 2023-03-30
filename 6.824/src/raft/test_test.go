@@ -234,7 +234,7 @@ func TestRPCBytes2B(t *testing.T) {
 }
 
 //
-// test just failure of followers.
+// 会挂掉一个节点，但是挂掉的节点不会回复
 //
 func TestFollowerFailure2B(t *testing.T) {
 	servers := 3
@@ -1097,4 +1097,4 @@ func internalChurn(t *testing.T, unreliable bool) {
 		// keep up, but not so infrequent that everything has settled
 		// down from one change to the next. Pick a value smaller than
 		// the election timeout, but not hugely smaller.
-		time.Sleep((RaftElectionTim
+		t

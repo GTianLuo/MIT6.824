@@ -359,7 +359,7 @@ func (cfg *config) cleanup() {
 // attach server i to the net.
 func (cfg *config) connect(i int) {
 	// fmt.Printf("connect(%d)\n", i)
-	PartAInfo(i, "即将恢复连接")
+	PartBInfo(i, "即将恢复连接")
 	cfg.connected[i] = true
 
 	// outgoing ClientEnds
@@ -593,7 +593,6 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 				nd, cmd1 := cfg.nCommitted(index)
 				if nd > 0 && nd >= expectedServers {
 					// committed
-					PartBInfo("cmd:", cmd, "  cmd1:", cmd1)
 					if cmd1 == cmd {
 						// and it was the command we submitted.
 						return index
