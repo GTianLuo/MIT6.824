@@ -56,5 +56,5 @@ func SetLogStage(discardLogs ...*log.Logger) {
 }
 
 func init() {
-	SetLogStage(PartALog)
+	SetLogStage(PartALog, PartBLog)
 }

@@ -45,7 +45,7 @@ import (
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
-	CommandIndex int
+	CommandIndex int32
 
 	// For 2D:
 	SnapshotValid bool
@@ -66,7 +66,7 @@ const (
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu          deadlock.Mutex      // Lock to protect shared access to this peer's state
+	mu          deadlock.RWMutex    // Lock to protect shared access to this peer's state
 	peers       []*labrpc.ClientEnd // RPC end points of all peers
 	persister   *Persister          // Object to hold this peer's persisted state
 	me          int                 // this peer's index into peers[]
@@ -77,8 +77,8 @@ type Raft struct {
 	timer       *time.Timer
 	hasVote     bool
 	rlogs       []rlog //当前节点的日志
-	commitIndex int    //提交到的索引
-	lastApplied int    //下次追加条目的索引
+	commitIndex int32  //提交到的索引
+	lastApplied int32  //下次追加条目的索引
 	// Your data here (2A, 2B, 2C).
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
@@ -96,8 +96,8 @@ type rlog struct {
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
 	term := rf.term
 	isLeader := rf.status == leader
 	// Your code here (2A).
@@ -172,10 +172,10 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	Term         int //任期
-	CandidateId  int //候选人id
-	LastLogIndex int //上一个日志下表
-	LastLogTerm  int //上一个日志所在的任期
+	Term         int   //任期
+	CandidateId  int   //候选人id
+	LastLogIndex int32 //上一个日志下表
+	LastLogTerm  int   //上一个日志所在的任期
 }
 
 //
@@ -204,14 +204,15 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 	//fmt.Println(args.CandidateId, "向", rf.me, "征票")
-	if rf.hasVote && (args.LastLogTerm == -1 || rf.voteCheck(args.Term, rf.rlogs[rf.lastApplied-1].term, rf.lastApplied-1, args)) {
+	if rf.hasVote && (args.LastLogTerm == -1 ||
+		rf.voteCheck(args.Term, rf.rlogs[atomic.LoadInt32(&rf.lastApplied)-1].term, atomic.LoadInt32(&rf.lastApplied), args)) {
 		reply.Term = args.Term
 		reply.VoteGranted = true
 		rf.hasVote = false
 	}
 }
 
-func (rf *Raft) voteCheck(term int, lastAppendTerm int, lastAppendIndex int, args *RequestVoteArgs) bool {
+func (rf *Raft) voteCheck(term int, lastAppendTerm int, lastAppendIndex int32, args *RequestVoteArgs) bool {
 	//对方任期小于自己，拒绝投
 	//只有对方的日志比自己新才能当选leader
 	//1.对方上一条日志任期号小于自己   拒绝投票
@@ -227,18 +228,18 @@ func (rf *Raft) voteCheck(term int, lastAppendTerm int, lastAppendIndex int, arg
 type AppendEntriesArgs struct {
 	Term         int         //领导人任期号
 	LeaderId     int         //领导人Id
-	PrevLogIndex int         //领导人前一个日志下标
-	PrevLogTerm  int         //领导人前一个日志的任期
+	PrevLogIndex int32       //领导人前一个日志下标
+	PrevLogTerm  int32       //领导人前一个日志的任期
 	Entries      interface{} //日志
-	LeaderCommit int         //领导人已经提交的日志索引值
-	NextLogIndex int         //节点附加日志的下标
+	LeaderCommit int32       //领导人已经提交的日志索引值
+	NextLogIndex int32       //节点附加日志的下标
 	NextLogTerm  int         //节点附加日志的任期
 }
 
 type AppendEntriesReply struct {
-	Term            int  //follow的任期
-	Success         bool //是否在follow上更新成功
-	NeedAppendIndex int  //follower日志落后太多时，需要通过该字段告知leader
+	Term            int   //follow的任期
+	Success         bool  //是否在follow上更新成功
+	NeedAppendIndex int32 //follower日志落后太多时，需要通过该字段告知leader
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -279,7 +280,7 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 	rf.timer.Reset(generateTimeOut())
 	PartAInfo(args.LeaderId, "向", rf.me, "发送心跳")
 	rf.mu.Unlock()
-	if rf.commitIndex < args.LeaderCommit {
+	if atomic.LoadInt32(&rf.commitIndex) < args.LeaderCommit {
 		rf.commitEntry(args.LeaderCommit)
 	}
 	reply.Success = true
@@ -290,7 +291,7 @@ func (rf *Raft) handleAppendEntries(args *AppendEntriesArgs, reply *AppendEntrie
 	rf.mu.Lock()
 	reply.Term = rf.term
 	rf.mu.Unlock()
-	if args.NextLogIndex <= rf.lastApplied {
+	if args.NextLogIndex <= atomic.LoadInt32(&rf.lastApplied) {
 		PartBInfo(rf.me, "追加来自", args.LeaderId, "的日志", args.NextLogIndex+1)
 		rl := rlog{
 			term:  args.NextLogTerm,
@@ -298,12 +299,12 @@ func (rf *Raft) handleAppendEntries(args *AppendEntriesArgs, reply *AppendEntrie
 		}
 		rf.appendRLog(rl, args.NextLogIndex)
 		rf.mu.Lock()
-		rf.lastApplied = args.NextLogIndex + 1
+		atomic.StoreInt32(&rf.lastApplied, args.NextLogIndex+1)
 		rf.mu.Unlock()
 		reply.Success = true
-	} else if args.NextLogIndex > rf.lastApplied {
+	} else if args.NextLogIndex > atomic.LoadInt32(&rf.lastApplied) {
 		reply.Success = false
-		reply.NeedAppendIndex = rf.lastApplied
+		reply.NeedAppendIndex = atomic.LoadInt32(&rf.lastApplied)
 	}
 
 }
@@ -337,10 +338,10 @@ func unMarshal(bytes interface{})interface{}{
 	json.
 }
 */
-func (rf *Raft) appendRLog(rl rlog, index int) {
+func (rf *Raft) appendRLog(rl rlog, index int32) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	for len(rf.rlogs) <= index {
+	for len(rf.rlogs) <= int(index) {
 		//这一步只是起到扩容的作用，追加entry在这里只是为了占位，没有意义
 		//		PartBInfo("len:", len(rf.rlogs), " index:", index)
 		rf.rlogs = append(rf.rlogs, rl)
@@ -349,7 +350,7 @@ func (rf *Raft) appendRLog(rl rlog, index int) {
 	rf.rlogs[index] = rl
 }
 
-func (rf *Raft) leaderAppend(command interface{}, index int, term int) {
+func (rf *Raft) leaderAppend(command interface{}, index int32, term int) {
 
 	PartBInfo("leader:", rf.me, " ", "追加日志 ", index+1)
 	//entry := marshal(command)
@@ -363,7 +364,7 @@ func (rf *Raft) leaderAppend(command interface{}, index int, term int) {
 	args := &AppendEntriesArgs{
 		Term:         rf.term,
 		LeaderId:     rf.me,
-		LeaderCommit: rf.commitIndex,
+		LeaderCommit: atomic.LoadInt32(&rf.commitIndex),
 		NextLogIndex: index,
 		NextLogTerm:  term,
 		Entries:      command,
@@ -396,7 +397,7 @@ func (rf *Raft) leaderAppend(command interface{}, index int, term int) {
 					args := &AppendEntriesArgs{
 						Term:         rf.term,
 						LeaderId:     rf.me,
-						LeaderCommit: rf.commitIndex,
+						LeaderCommit: atomic.LoadInt32(&rf.commitIndex),
 						NextLogIndex: i,
 						NextLogTerm:  rf.rlogs[i].term,
 						Entries:      rf.rlogs[i].entry,
@@ -413,14 +414,14 @@ func (rf *Raft) leaderAppend(command interface{}, index int, term int) {
 	}
 }
 
-func (rf *Raft) commitEntry(index int) {
+func (rf *Raft) commitEntry(index int32) {
 	//	PartBInfo("index:", index, "  ", "commitIndex:", rf.commitIndex)
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	if rf.lastApplied-1 < index {
-		index = rf.lastApplied - 1
+	if atomic.LoadInt32(&rf.lastApplied)-1 < index {
+		index = atomic.LoadInt32(&rf.lastApplied) - 1
 	}
-	for i := rf.commitIndex + 1; i <= index; i++ {
+	for i := atomic.LoadInt32(&rf.commitIndex) + 1; i <= index; i++ {
 		rlog := rf.rlogs[i]
 		applyMsg := ApplyMsg{
 			Command:      rlog.entry,
@@ -430,7 +431,7 @@ func (rf *Raft) commitEntry(index int) {
 		PartBInfo(rf.me, "提交日志：", i+1)
 		rf.applyCh <- applyMsg
 	}
-	rf.commitIndex = index
+	atomic.StoreInt32(&rf.commitIndex, index)
 }
 
 // Start 附加命令到日志中，第一个返回值是日志被附加到的位置(索引值)，第二节返回值是当前节点的任期，第三个返回值表示当前节点是否是leader
@@ -438,13 +439,13 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	isLeader := rf.status == leader
-	index := rf.lastApplied
+	index := atomic.LoadInt32(&rf.lastApplied)
 	term := rf.term
 	if isLeader {
 		go rf.leaderAppend(command, index, term)
-		rf.lastApplied++
+		atomic.StoreInt32(&rf.lastApplied, 1)
 	}
-	return index + 1, term, isLeader
+	return int(index + 1), term, isLeader
 }
 
 //
@@ -498,11 +499,11 @@ func (rf *Raft) electLeader() {
 	args := &RequestVoteArgs{
 		CandidateId:  rf.me,
 		Term:         rf.term,
-		LastLogIndex: rf.lastApplied - 1,
+		LastLogIndex: atomic.LoadInt32(&rf.lastApplied) - 1,
 		LastLogTerm:  -1,
 	}
-	if rf.lastApplied != 0 {
-		args.LastLogTerm = rf.rlogs[rf.lastApplied-1].term
+	if atomic.LoadInt32(&rf.lastApplied) != 0 {
+		args.LastLogTerm = rf.rlogs[atomic.LoadInt32(&rf.lastApplied)-1].term
 	}
 	rf.mu.Unlock()
 	var successCount int = 0 // 被选上的票数
@@ -562,7 +563,7 @@ func (rf *Raft) heartBeat() {
 			break
 		}
 		rf.mu.Lock()
-		args := &AppendEntriesArgs{Term: term, LeaderId: rf.me, LeaderCommit: rf.commitIndex}
+		args := &AppendEntriesArgs{Term: term, LeaderId: rf.me, LeaderCommit: atomic.LoadInt32(&rf.commitIndex)}
 		rf.mu.Unlock()
 		for i := 0; i < len(rf.peers); i++ {
 			if i == rf.me {
@@ -612,7 +613,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.status = follower
 	rf.timer = time.NewTimer(generateTimeOut())
 	rf.applyCh = applyCh
-	rf.commitIndex = -1
+	atomic.StoreInt32(&rf.commitIndex, -1)
 	// Your initialization code here (2A, 2B, 2C).
 
 	// initialize from state persisted before a crash
