@@ -251,7 +251,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	//首先判读一致性
 	term, isLeader := rf.GetState()
 	reply.Term = term
-	PartAInfo(rf.me, ":", term, " ", args.LeaderId, ":", args.Term)
+	//	PartAInfo(rf.me, ":", term, " ", args.LeaderId, ":", args.Term)
 	if !rf.appendEntriesCheck(args.Term, term) {
 		PartAInfo(rf.me, "丢弃来自", args.LeaderId, "的包")
 		return
@@ -273,12 +273,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 }
 
 func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesReply) {
+	PartAInfo(rf.me, "收到来自", args.LeaderId, "的心跳")
 	rf.mu.Lock()
 	rf.status = follower
 	rf.term = args.Term
 	rf.hasVote = true
 	rf.timer.Reset(generateTimeOut())
-	PartAInfo(args.LeaderId, "向", rf.me, "发送心跳")
 	rf.mu.Unlock()
 	if atomic.LoadInt32(&rf.commitIndex) < args.LeaderCommit {
 		rf.commitEntry(args.LeaderCommit)
@@ -288,9 +288,9 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 
 func (rf *Raft) handleAppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 
-	rf.mu.Lock()
+	rf.mu.RLock()
 	reply.Term = rf.term
-	rf.mu.Unlock()
+	rf.mu.RUnlock()
 	if args.NextLogIndex <= atomic.LoadInt32(&rf.lastApplied) {
 		PartBInfo(rf.me, "追加来自", args.LeaderId, "的日志", args.NextLogIndex+1)
 		rl := rlog{
@@ -298,9 +298,7 @@ func (rf *Raft) handleAppendEntries(args *AppendEntriesArgs, reply *AppendEntrie
 			entry: args.Entries,
 		}
 		rf.appendRLog(rl, args.NextLogIndex)
-		rf.mu.Lock()
 		atomic.StoreInt32(&rf.lastApplied, args.NextLogIndex+1)
-		rf.mu.Unlock()
 		reply.Success = true
 	} else if args.NextLogIndex > atomic.LoadInt32(&rf.lastApplied) {
 		reply.Success = false
@@ -360,7 +358,7 @@ func (rf *Raft) leaderAppend(command interface{}, index int32, term int) {
 	}
 
 	rf.appendRLog(rl, index)
-	rf.mu.Lock()
+	rf.mu.RLock()
 	args := &AppendEntriesArgs{
 		Term:         rf.term,
 		LeaderId:     rf.me,
@@ -369,7 +367,7 @@ func (rf *Raft) leaderAppend(command interface{}, index int32, term int) {
 		NextLogTerm:  term,
 		Entries:      command,
 	}
-	rf.mu.Unlock()
+	rf.mu.RUnlock()
 	var successAppend int32 = 1
 	for i := 0; i < len(rf.peers); i++ {
 		if i == rf.me {
@@ -392,7 +390,7 @@ func (rf *Raft) leaderAppend(command interface{}, index int32, term int) {
 			} else {
 				//follower日志落后太多
 				for i := reply.NeedAppendIndex; i <= args.NextLogIndex; i++ {
-					rf.mu.Lock()
+					rf.mu.RLock()
 					reply := &AppendEntriesReply{}
 					args := &AppendEntriesArgs{
 						Term:         rf.term,
@@ -403,7 +401,7 @@ func (rf *Raft) leaderAppend(command interface{}, index int32, term int) {
 						Entries:      rf.rlogs[i].entry,
 					}
 					rf.sendAppendEntries(server, args, reply)
-					rf.mu.Unlock()
+					rf.mu.RUnlock()
 				}
 			}
 		}(i, args)
@@ -416,8 +414,8 @@ func (rf *Raft) leaderAppend(command interface{}, index int32, term int) {
 
 func (rf *Raft) commitEntry(index int32) {
 	//	PartBInfo("index:", index, "  ", "commitIndex:", rf.commitIndex)
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
 	if atomic.LoadInt32(&rf.lastApplied)-1 < index {
 		index = atomic.LoadInt32(&rf.lastApplied) - 1
 	}
@@ -436,14 +434,14 @@ func (rf *Raft) commitEntry(index int32) {
 
 // Start 附加命令到日志中，第一个返回值是日志被附加到的位置(索引值)，第二节返回值是当前节点的任期，第三个返回值表示当前节点是否是leader
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
 	isLeader := rf.status == leader
 	index := atomic.LoadInt32(&rf.lastApplied)
 	term := rf.term
 	if isLeader {
 		go rf.leaderAppend(command, index, term)
-		atomic.StoreInt32(&rf.lastApplied, 1)
+		atomic.AddInt32(&rf.lastApplied, 1)
 	}
 	return int(index + 1), term, isLeader
 }
@@ -492,10 +490,10 @@ func (rf *Raft) ticker() {
 }
 
 func (rf *Raft) electLeader() {
-	PartAInfo(rf.me, "开始选举 term:", rf.term)
+
 	rf.parseRaftStatus(candidate)
-	PartAInfo(rf.me, ":", rf.term)
-	rf.mu.Lock()
+	PartAInfo(rf.me, "开始选举 term:", rf.term)
+	rf.mu.RLock()
 	args := &RequestVoteArgs{
 		CandidateId:  rf.me,
 		Term:         rf.term,
@@ -505,7 +503,7 @@ func (rf *Raft) electLeader() {
 	if atomic.LoadInt32(&rf.lastApplied) != 0 {
 		args.LastLogTerm = rf.rlogs[atomic.LoadInt32(&rf.lastApplied)-1].term
 	}
-	rf.mu.Unlock()
+	rf.mu.RUnlock()
 	var successCount int = 0 // 被选上的票数
 	//对其它的节点征票
 	replys := make(chan *RequestVoteReply, len(rf.peers))
@@ -562,9 +560,9 @@ func (rf *Raft) heartBeat() {
 		if !isLeader {
 			break
 		}
-		rf.mu.Lock()
+		rf.mu.RLock()
 		args := &AppendEntriesArgs{Term: term, LeaderId: rf.me, LeaderCommit: atomic.LoadInt32(&rf.commitIndex)}
-		rf.mu.Unlock()
+		rf.mu.RUnlock()
 		for i := 0; i < len(rf.peers); i++ {
 			if i == rf.me {
 				continue

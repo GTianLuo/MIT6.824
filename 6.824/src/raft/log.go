@@ -10,7 +10,7 @@ import (
 var (
 	errorLog = log.New(os.Stdout, "\033[31m[error]\033[0m", log.LstdFlags|log.Lshortfile)
 	infoLog  = log.New(os.Stdout, "\033[34m[info]\033[0m", log.LstdFlags|log.Lshortfile)
-	PartALog = log.New(os.Stdout, "\033[34[info]\033[0m", log.LstdFlags|log.Lshortfile)
+	PartALog = log.New(os.Stdout, "\033[34m[info]\033[0m", log.LstdFlags|log.Lshortfile)
 	PartBLog = log.New(os.Stdout, "\033[35m[info]\033[0m", log.LstdFlags|log.Lshortfile)
 	loggers  = []*log.Logger{errorLog, infoLog}
 	mu       sync.Mutex
@@ -56,5 +56,5 @@ func SetLogStage(discardLogs ...*log.Logger) {
 }
 
 func init() {
-	SetLogStage(PartALog, PartBLog)
+	SetLogStage()
 }
