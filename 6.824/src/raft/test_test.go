@@ -283,7 +283,7 @@ func TestFollowerFailure2B(t *testing.T) {
 //
 // test just failure of leaders.
 //
-func For2023TestLeaderFailure2B(t *testing.T) {
+func TestLeaderFailure2B(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -343,7 +343,7 @@ func TestFailAgree2B(t *testing.T) {
 	// able to agree despite the disconnected follower.
 	cfg.one(102, servers-1, false)
 	cfg.one(103, servers-1, false)
-	time.Sleep(RaftElectionTimeout)
+	//time.Sleep(RaftElectionTimeout)
 	cfg.one(104, servers-1, false)
 	cfg.one(105, servers-1, false)
 
@@ -358,6 +358,20 @@ func TestFailAgree2B(t *testing.T) {
 	cfg.one(107, servers, true)
 
 	cfg.end()
+}
+
+func TestMy(t *testing.T) {
+	servers := 3
+	cfg := make_config(t, servers, false, false)
+	defer cfg.cleanup()
+	time.Sleep(12 * time.Second)
+	leader := cfg.checkOneLeader()
+	cfg.one(101, servers, false)
+	cfg.disconnect((leader + 1) % servers)
+	cfg.one(101, servers-1, false)
+	//cfg.one(101, servers, false)
+	time.Sleep(20 * time.Second)
+
 }
 
 func TestFailNoAgree2B(t *testing.T) {
@@ -450,7 +464,6 @@ loop:
 				is <- i
 			}(ii)
 		}
-
 		wg.Wait()
 		close(is)
 
@@ -464,6 +477,7 @@ loop:
 		failed := false
 		cmds := []int{}
 		for index := range is {
+			PartAInfo("===================================================================")
 			cmd := cfg.wait(index, servers, term)
 			if ix, ok := cmd.(int); ok {
 				if ix == -1 {
