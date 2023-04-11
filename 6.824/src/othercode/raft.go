@@ -414,7 +414,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.logs = rf.logs[:1]
 			rf.logs = append(rf.logs, args.LogEntries[startIdx:]...)
 		}
-
 		return
 	}
 
