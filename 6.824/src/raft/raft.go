@@ -96,8 +96,8 @@ type rlog struct {
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
 	term := rf.term
 	isLeader := rf.status == leader
 	// Your code here (2A).
@@ -289,7 +289,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.PrevLogIndex < atomic.LoadInt32(&rf.lastApplied)-1 {
 		atomic.StoreInt32(&rf.lastApplied, args.PrevLogIndex+1)
 	}
-	PartAInfo("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", atomic.LoadInt32(&rf.lastApplied)-1)
 	rf.mu.Unlock()
 	//心跳包
 	if args.Entries == nil {
@@ -356,7 +355,7 @@ func (rf *Raft) handleLogBackUp(args *AppendEntriesArgs, reply *AppendEntriesRep
 
 func (rf *Raft) handleAppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 
-	rf.mu.Lock()
+	rf.mu.RLock()
 	reply.Term = rf.term
 	var prevLogIndex int32 = -1
 	prevLogTerm := -1
@@ -369,10 +368,10 @@ func (rf *Raft) handleAppendEntries(args *AppendEntriesArgs, reply *AppendEntrie
 		PartBInfo("args.PrevLogTerm:", args.PrevLogTerm, " prevLogTerm", prevLogTerm, " args.PrevLogIndex", args.PrevLogIndex, " prevLogIndex", prevLogIndex)
 		PartBInfo(rf.me, "日志落后，追加日志失败")
 		reply.Success = false
-		rf.mu.Unlock()
+		rf.mu.RUnlock()
 		return
 	}
-	rf.mu.Unlock()
+	rf.mu.RUnlock()
 	rl := rlog{
 		term:  args.NextLogTerm,
 		entry: args.Entries,
@@ -543,7 +542,7 @@ func (rf *Raft) electLeader() {
 
 	rf.parseRaftStatus(candidate)
 	PartAInfo(rf.me, "===========================开始选举 term:", rf.term)
-	rf.mu.Lock()
+	rf.mu.RLock()
 	args := &RequestVoteArgs{
 		CandidateId:  rf.me,
 		Term:         rf.term,
@@ -553,7 +552,7 @@ func (rf *Raft) electLeader() {
 	if atomic.LoadInt32(&rf.lastApplied) != 0 {
 		args.LastLogTerm = rf.rlogs[atomic.LoadInt32(&rf.lastApplied)-1].term
 	}
-	rf.mu.Unlock()
+	rf.mu.RUnlock()
 	var successCount int32 = 0 // 被选上的票数
 	//对其它的节点征票
 	for i := 0; i < len(rf.peers); i++ {
@@ -599,7 +598,7 @@ func (rf *Raft) heartBeat() {
 		if !isLeader {
 			break
 		}
-		rf.mu.Lock()
+		rf.mu.RLock()
 		args := &AppendEntriesArgs{
 			Term:         term,
 			LeaderId:     rf.me,
@@ -610,7 +609,7 @@ func (rf *Raft) heartBeat() {
 		if args.PrevLogIndex != -1 {
 			args.PrevLogTerm = rf.rlogs[args.PrevLogIndex].term
 		}
-		rf.mu.Unlock()
+		rf.mu.RUnlock()
 		for i := 0; i < len(rf.peers); i++ {
 			if i == rf.me {
 				continue
