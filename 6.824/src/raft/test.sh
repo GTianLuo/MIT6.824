@@ -1,4 +1,4 @@
-for i in {1..20} ; do
+for i in {1..1} ; do
  echo i + "======================================================================================================"
- go test -run TestBackup2B -race
+ go test -run 2B -race
 done

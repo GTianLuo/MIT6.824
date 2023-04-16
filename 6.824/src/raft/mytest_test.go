@@ -34,13 +34,14 @@ func TestTime(t *testing.T) {
 }
 
 type S struct {
-	x int
-	y int
+	X int
+	Y int
 }
 
 type K struct {
-	x string
-	y []int
+	X string
+	Y []int
+	Z bool
 }
 
 func A(x *S) {
@@ -49,8 +50,8 @@ func A(x *S) {
 
 func TestLog(t *testing.T) {
 	s := &S{
-		x: 1,
-		y: 2,
+		X: 1,
+		Y: 2,
 	}
 	A(s)
 }
@@ -66,8 +67,35 @@ func TestTicker(t *testing.T) {
 }
 
 func TestGob(t *testing.T) {
-	s := S{x: 1, y: 2}
+	s := &S{X: 1, Y: 2}
+	k := &K{X: "aaaaaa", Y: []int{1, 2, 3}}
 	data := bytes.NewBuffer([]byte{})
 	encoder := labgob.NewEncoder(data)
-	encoder.Encode(s)
+	if err := encoder.Encode(s); err != nil {
+		fmt.Println(err)
+	}
+	if err := encoder.Encode(k); err != nil {
+		fmt.Println(err)
+	}
+
+	decoder := labgob.NewDecoder(data)
+
+	var k2 K
+	var s2 S
+	if err := decoder.Decode(&s2); err != nil {
+		fmt.Println(err)
+	}
+	if err := decoder.Decode(&k2); err != nil {
+		fmt.Println(err)
+	}
+	fmt.Println(k2)
+	fmt.Println(s2)
+}
+func add() {
+	i := 1
+	go func() {
+		for {
+			fmt.Println(i)
+		}
+	}()
 }

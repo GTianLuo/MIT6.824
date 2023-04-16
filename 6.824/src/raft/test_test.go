@@ -30,18 +30,18 @@ func TestInitialElection2A(t *testing.T) {
 	cfg.checkOneLeader()
 
 	// sleep a bit to avoid racing with followers learning of the
-	// election, then check that all peers agree on the term.
+	// election, then check that all peers agree on the Term.
 	time.Sleep(50 * time.Millisecond)
 	term1 := cfg.checkTerms()
 	if term1 < 1 {
-		t.Fatalf("term is %v, but should be at least 1", term1)
+		t.Fatalf("Term is %v, but should be at least 1", term1)
 	}
 
-	// does the leader+term stay the same if there is no network failure?
+	// does the leader+Term stay the same if there is no network failure?
 	time.Sleep(2 * RaftElectionTimeout)
 	term2 := cfg.checkTerms()
 	if term1 != term2 {
-		fmt.Printf("warning: term changed even though there were no failures")
+		fmt.Printf("warning: Term changed even though there were no failures")
 	}
 
 	// there should still be a leader.
@@ -468,7 +468,7 @@ loop:
 
 		for j := 0; j < servers; j++ {
 			if t, _ := cfg.rafts[j].GetState(); t != term {
-				// term changed -- can't expect low RPC counts
+				// Term changed -- can't expect low RPC counts
 				continue loop
 			}
 		}
@@ -519,7 +519,7 @@ loop:
 	}
 
 	if !success {
-		t.Fatalf("term changed too often")
+		t.Fatalf("Term changed too often")
 	}
 
 	cfg.end()
@@ -637,19 +637,57 @@ func TestBackup2B(t *testing.T) {
 }
 
 func TestAppendEntry(t *testing.T) {
-	servers := 3
+	servers := 5
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
 
-	cfg.begin("Test (2B): leader backs up quickly over incorrect follower logs")
+	cfg.begin("Test (2C): Figure 8 (unreliable)")
 
-	cfg.one(rand.Int(), servers, true)
-	leader1 := cfg.checkOneLeader()
-	for i := 0; i < 100; i++ {
-		cfg.rafts[leader1].Start(i)
+	cfg.one(1, 1, true)
+
+	nup := servers
+	for iters := 2; iters < 1000; iters++ {
+		if iters == 200 {
+			cfg.setlongreordering(true)
+		}
+		leader := -1
+		for i := 0; i < servers; i++ {
+			_, _, ok := cfg.rafts[i].Start(iters)
+			if ok && cfg.connected[i] {
+				leader = i
+			}
+		}
+
+		if (rand.Int() % 1000) < 100 {
+			ms := rand.Int63() % (int64(RaftElectionTimeout/time.Millisecond) / 2)
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		} else {
+			ms := (rand.Int63() % 13)
+			time.Sleep(time.Duration(ms) * time.Millisecond)
+		}
+
+		if leader != -1 && (rand.Int()%1000) < int(RaftElectionTimeout/time.Millisecond)/2 {
+			cfg.disconnect(leader)
+			nup -= 1
+		}
+
+		if nup < 3 {
+			s := rand.Int() % servers
+			if cfg.connected[s] == false {
+				cfg.connect(s)
+				nup += 1
+			}
+		}
 	}
-	cfg.one(rand.Int(), servers, true)
-	//time.Sleep(3 * time.Second)
+
+	for i := 0; i < servers; i++ {
+		if cfg.connected[i] == false {
+			cfg.connect(i)
+		}
+	}
+
+	cfg.one(rand.Int()%10000, servers, true)
+
 	cfg.end()
 }
 
@@ -703,7 +741,7 @@ loop:
 				continue loop
 			}
 			if !ok {
-				// No longer the leader, so term has changed
+				// No longer the leader, so Term has changed
 				continue loop
 			}
 			if starti+i != index1 {
@@ -715,7 +753,7 @@ loop:
 			cmd := cfg.wait(starti+i, servers, term)
 			if ix, ok := cmd.(int); ok == false || ix != cmds[i-1] {
 				if ix == -1 {
-					// term changed -- try again
+					// Term changed -- try again
 					continue loop
 				}
 				t.Fatalf("wrong value %v committed for index %v; expected %v\n", cmd, starti+i, cmds)
@@ -726,7 +764,7 @@ loop:
 		total2 = 0
 		for j := 0; j < servers; j++ {
 			if t, _ := cfg.rafts[j].GetState(); t != term {
-				// term changed -- can't expect low RPC counts
+				// Term changed -- can't expect low RPC counts
 				// need to keep going to update total2
 				failed = true
 			}
@@ -746,7 +784,7 @@ loop:
 	}
 
 	if !success {
-		t.Fatalf("term changed too often")
+		t.Fatalf("Term changed too often")
 	}
 
 	time.Sleep(RaftElectionTimeout)
@@ -780,9 +818,7 @@ func TestPersist12C(t *testing.T) {
 		cfg.disconnect(i)
 		cfg.connect(i)
 	}
-
 	cfg.one(12, servers, true)
-
 	leader1 := cfg.checkOneLeader()
 	cfg.disconnect(leader1)
 	cfg.start1(leader1, cfg.applier)
@@ -892,7 +928,7 @@ func TestPersist32C(t *testing.T) {
 // probability (perhaps without committing the command), or crash after a while
 // with low probability (most likey committing the command).  If the number of
 // alive servers isn't enough to form a majority, perhaps start a new server.
-// The leader in a new term may try to finish replicating log entries that
+// The leader in a new Term may try to finish replicating log entries that
 // haven't been committed yet.
 //
 func TestFigure82C(t *testing.T) {
@@ -987,16 +1023,16 @@ func TestFigure8Unreliable2C(t *testing.T) {
 
 	cfg.begin("Test (2C): Figure 8 (unreliable)")
 
-	cfg.one(rand.Int()%10000, 1, true)
+	cfg.one(1, 1, true)
 
 	nup := servers
-	for iters := 0; iters < 1000; iters++ {
+	for iters := 2; iters < 1000; iters++ {
 		if iters == 200 {
 			cfg.setlongreordering(true)
 		}
 		leader := -1
 		for i := 0; i < servers; i++ {
-			_, _, ok := cfg.rafts[i].Start(rand.Int() % 10000)
+			_, _, ok := cfg.rafts[i].Start(iters)
 			if ok && cfg.connected[i] {
 				leader = i
 			}

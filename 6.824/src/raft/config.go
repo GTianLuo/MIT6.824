@@ -145,7 +145,7 @@ func (cfg *config) checkLogs(i int, m ApplyMsg) (string, bool) {
 	for j := 0; j < len(cfg.logs); j++ {
 		if old, oldok := cfg.logs[j][int(m.CommandIndex)]; oldok && old != v {
 			log.Printf("%v: log %v; server %v\n", i, cfg.logs[i], cfg.logs[j])
-			// some server has already committed a different value for this entry!
+			// some server has already committed a different value for this Entry!
 			err_msg = fmt.Sprintf("commit index=%v server=%v %v != server=%v %v",
 				m.CommandIndex, i, m.Command, j, old)
 		}
@@ -447,7 +447,7 @@ func (cfg *config) checkOneLeader() int {
 		lastTermWithLeader := -1
 		for term, leaders := range leaders {
 			if len(leaders) > 1 {
-				cfg.t.Fatalf("term %d has %d (>1) leaders", term, len(leaders))
+				cfg.t.Fatalf("Term %d has %d (>1) leaders", term, len(leaders))
 			}
 			if term > lastTermWithLeader {
 				lastTermWithLeader = term
@@ -462,7 +462,7 @@ func (cfg *config) checkOneLeader() int {
 	return -1
 }
 
-// check that everyone agrees on the term.
+// check that everyone agrees on the Term.
 func (cfg *config) checkTerms() int {
 	term := -1
 	for i := 0; i < cfg.n; i++ {
@@ -471,7 +471,7 @@ func (cfg *config) checkTerms() int {
 			if term == -1 {
 				term = xterm
 			} else if term != xterm {
-				cfg.t.Fatalf("servers disagree on term")
+				cfg.t.Fatalf("servers disagree on Term")
 			}
 		}
 	}
@@ -494,7 +494,7 @@ func (cfg *config) checkNoLeader() {
 	}
 }
 
-// how many servers think a log entry is committed?
+// how many servers think a log Entry is committed?
 func (cfg *config) nCommitted(index int) (int, interface{}) {
 	count := 0
 	var cmd interface{} = nil
@@ -566,6 +566,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 	t0 := time.Now()
 	starts := 0
 	index2 := 0
+	nd2 := 0
 	for time.Since(t0).Seconds() < 10 && cfg.checkFinished() == false {
 		// try all the servers, maybe one is the leader.
 		index := -1
@@ -593,6 +594,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
+				nd2 = nd
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {
@@ -610,7 +612,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 		}
 	}
 	if cfg.checkFinished() == false {
-		cfg.t.Fatalf("one(%v) failed to reach agreement  日志序号：%v", cmd, index2)
+		cfg.t.Fatalf("one(%v) failed to reach agreement  日志序号：%v expectServer: %v  已提交: %v", cmd, index2, expectedServers, nd2)
 	}
 	return -1
 }
@@ -619,7 +621,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 // print the Test message.
 // e.g. cfg.begin("Test (2B): RPC counts aren't too high")
 func (cfg *config) begin(description string) {
-	fmt.Printf("%S ...\n", description)
+	fmt.Printf("%s ...\n", description)
 	cfg.t0 = time.Now()
 	cfg.rpcs0 = cfg.rpcTotal()
 	cfg.bytes0 = cfg.bytesTotal()

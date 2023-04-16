@@ -12,6 +12,8 @@ var (
 	infoLog  = log.New(os.Stdout, "\033[34m[info]\033[0m", log.LstdFlags|log.Lshortfile)
 	PartALog = log.New(os.Stdout, "\033[34m[info]\033[0m", log.LstdFlags|log.Lshortfile)
 	PartBLog = log.New(os.Stdout, "\033[35m[info]\033[0m", log.LstdFlags|log.Lshortfile)
+	PartCLog = log.New(os.Stdout, "\033[34m[info]\033[0m", log.LstdFlags|log.Lshortfile)
+	PartDLog = log.New(os.Stdout, "\033[33m[info]\033[0m", log.LstdFlags|log.Lshortfile)
 	loggers  = []*log.Logger{errorLog, infoLog}
 	mu       sync.Mutex
 )
@@ -27,6 +29,9 @@ var (
 
 	PartBInfo  = PartBLog.Println
 	PartBInfof = PartBLog.Println
+
+	PartCInfo  = PartCLog.Println
+	PartCInfof = PartCLog.Println
 )
 
 const (
@@ -56,5 +61,5 @@ func SetLogStage(discardLogs ...*log.Logger) {
 }
 
 func init() {
-	SetLogStage(PartALog, PartBLog)
+	SetLogStage()
 }
