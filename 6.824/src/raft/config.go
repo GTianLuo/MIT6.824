@@ -50,7 +50,7 @@ type config struct {
 	connected   []bool   // whether each server is on the net
 	saved       []*Persister
 	endnames    [][]string            // the port file names each sends to
-	logs        []map[int]interface{} // copy of each server's committed entries
+	logs        []map[int]interface{} // copy of each server'S committed entries
 	lastApplied []int
 	start       time.Time // time at which make_config() was called
 	// begin()/end() statistics
@@ -117,7 +117,7 @@ func (cfg *config) crash1(i int) {
 
 	// a fresh persister, in case old instance
 	// continues to update the Persister.
-	// but copy old persister's content so that we always
+	// but copy old persister'S content so that we always
 	// pass Make() the last persisted state.
 	if cfg.saved[i] != nil {
 		cfg.saved[i] = cfg.saved[i].Copy()
@@ -279,7 +279,7 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 	cfg.crash1(i)
 	// a fresh set of outgoing ClientEnd names.
-	// so that old crashed instance's ClientEnds can't send.
+	// so that old crashed instance'S ClientEnds can't send.
 	cfg.endnames[i] = make([]string, cfg.n)
 	for j := 0; j < cfg.n; j++ {
 		cfg.endnames[i][j] = randstring(20)
@@ -297,8 +297,8 @@ func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 	cfg.lastApplied[i] = 0
 
 	// a fresh persister, so old instance doesn't overwrite
-	// new instance's persisted state.
-	// but copy old persister's content so that we always
+	// new instance'S persisted state.
+	// but copy old persister'S content so that we always
 	// pass Make() the last persisted state.
 	if cfg.saved[i] != nil {
 		cfg.saved[i] = cfg.saved[i].Copy()
@@ -565,6 +565,7 @@ func (cfg *config) wait(index int, n int, startTerm int) interface{} {
 func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 	t0 := time.Now()
 	starts := 0
+	index2 := 0
 	for time.Since(t0).Seconds() < 10 && cfg.checkFinished() == false {
 		// try all the servers, maybe one is the leader.
 		index := -1
@@ -585,7 +586,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 				}
 			}
 		}
-
+		index2 = index
 		if index != -1 {
 			// somebody claimed to be the leader and to have
 			// submitted our command; wait a while for agreement.
@@ -609,7 +610,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 		}
 	}
 	if cfg.checkFinished() == false {
-		cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
+		cfg.t.Fatalf("one(%v) failed to reach agreement  日志序号：%v", cmd, index2)
 	}
 	return -1
 }
@@ -618,7 +619,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 // print the Test message.
 // e.g. cfg.begin("Test (2B): RPC counts aren't too high")
 func (cfg *config) begin(description string) {
-	fmt.Printf("%s ...\n", description)
+	fmt.Printf("%S ...\n", description)
 	cfg.t0 = time.Now()
 	cfg.rpcs0 = cfg.rpcTotal()
 	cfg.bytes0 = cfg.bytesTotal()

@@ -1,3 +1,4 @@
-for i in {1..30} ; do
- go test -run 2A -race
+for i in {1..20} ; do
+ echo i + "======================================================================================================"
+ go test -run TestBackup2B -race
 done

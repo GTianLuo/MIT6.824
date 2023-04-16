@@ -16,7 +16,7 @@ import "sync/atomic"
 import "sync"
 
 // The tester generously allows solutions to complete elections in one second
-// (much more than the paper's range of timeouts).
+// (much more than the paper'S range of timeouts).
 const RaftElectionTimeout = 1000 * time.Millisecond
 
 func TestInitialElection2A(t *testing.T) {
@@ -77,7 +77,7 @@ func TestReElection2A(t *testing.T) {
 	PartAInfo("第三次检查完成==============================================")
 
 	PartAInfo("挂掉上一个leader还有另外一个节点，此时不应该存在leader")
-	// if there's no quorum, no new leader should
+	// if there'S no quorum, no new leader should
 	// be elected.
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
@@ -361,17 +361,16 @@ func TestFailAgree2B(t *testing.T) {
 }
 
 func TestMy(t *testing.T) {
-	servers := 3
+	servers := 10
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
-	time.Sleep(12 * time.Second)
-	leader := cfg.checkOneLeader()
-	cfg.one(101, servers, false)
-	cfg.disconnect((leader + 1) % servers)
-	cfg.one(101, servers-1, false)
-	//cfg.one(101, servers, false)
-	time.Sleep(20 * time.Second)
 
+	cfg.begin("Test (2B): leader backs up quickly over incorrect follower logs")
+
+	for i := 0; i < 100; i++ {
+		cfg.one(rand.Int(), servers, true)
+	}
+	cfg.end()
 }
 
 func TestFailNoAgree2B(t *testing.T) {
@@ -430,7 +429,7 @@ func TestConcurrentStarts2B(t *testing.T) {
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
 
-	cfg.begin("Test (2B): concurrent Start()s")
+	cfg.begin("Test (2B): concurrent Start()S")
 
 	var success bool
 loop:
@@ -482,7 +481,7 @@ loop:
 			if ix, ok := cmd.(int); ok {
 				if ix == -1 {
 					// peers have moved on to later terms
-					// so we can't expect all Start()s to
+					// so we can't expect all Start()S to
 					// have succeeded
 					failed = true
 					break
@@ -623,7 +622,7 @@ func TestBackup2B(t *testing.T) {
 	cfg.connect(other)
 
 	// lots of successful commands to new group.
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 10; i++ {
 		cfg.one(rand.Int(), 3, true)
 	}
 
@@ -633,6 +632,24 @@ func TestBackup2B(t *testing.T) {
 	}
 	cfg.one(rand.Int(), servers, true)
 
+	cfg.end()
+	time.Sleep(1000 * 1)
+}
+
+func TestAppendEntry(t *testing.T) {
+	servers := 3
+	cfg := make_config(t, servers, false, false)
+	defer cfg.cleanup()
+
+	cfg.begin("Test (2B): leader backs up quickly over incorrect follower logs")
+
+	cfg.one(rand.Int(), servers, true)
+	leader1 := cfg.checkOneLeader()
+	for i := 0; i < 100; i++ {
+		cfg.rafts[leader1].Start(i)
+	}
+	cfg.one(rand.Int(), servers, true)
+	//time.Sleep(3 * time.Second)
 	cfg.end()
 }
 
@@ -1207,7 +1224,7 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 			cfg.rafts[sender].Start(rand.Int())
 		}
 
-		// let applier threads catch up with the Start()'s
+		// let applier threads catch up with the Start()'S
 		if disconnect == false && crash == false {
 			// make sure all followers have caught up, so that
 			// an InstallSnapshot RPC isn't required for

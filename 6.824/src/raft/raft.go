@@ -65,10 +65,10 @@ const (
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu          deadlock.RWMutex    // Lock to protect shared access to this peer's state
+	mu          deadlock.RWMutex    // Lock to protect shared access to this peer'S state
 	peers       []*labrpc.ClientEnd // RPC end points of all peers
-	persister   *Persister          // Object to hold this peer's persisted state
-	me          int                 // this peer's index into peers[]
+	persister   *Persister          // Object to hold this peer'S persisted state
+	me          int                 // this peer'S index into peers[]
 	dead        int32               // set by Kill()
 	term        int                 // 当前任期
 	applyCh     chan ApplyMsg
@@ -80,7 +80,7 @@ type Raft struct {
 	lastApplied int32  //下次追加条目的索引
 	backupFor   int    //follower日志落后之后，需要用这个标记，防止重复追加
 	// Your data here (2A, 2B, 2C).
-	// Look at the paper's Figure 2 for a description of what
+	// Look at the paper'S Figure 2 for a description of what
 	// state a Raft server must maintain.
 
 }
@@ -105,7 +105,7 @@ func (rf *Raft) GetState() (int, bool) {
 }
 
 func generateTimeOut() time.Duration {
-	return time.Duration(1000+rand.Intn(150)) * time.Millisecond
+	return time.Duration(200+rand.Intn(150)) * time.Millisecond
 }
 
 func (rf *Raft) resetTimer() {
@@ -114,9 +114,9 @@ func (rf *Raft) resetTimer() {
 }
 
 //
-// save Raft's persistent state to stable storage,
+// save Raft'S persistent state to stable storage,
 // where it can later be retrieved after a crash and restart.
-// see paper's Figure 2 for a description of what should be persistent.
+// see paper'S Figure 2 for a description of what should be persistent.
 //
 func (rf *Raft) persist() {
 	// Your code here (2C).
@@ -205,7 +205,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	//若当前节点是leader，若对方term大于自己，卸职
 	if rf.status == leader && args.Term > args.Term {
 		fmt.Println(rf.me, "在收到", args.CandidateId, "的征票后卸职")
-		rf.status = follower
+		rf.parseRaftStatus(follower)
 		return
 	}
 	//fmt.Println(args.CandidateId, "向", rf.me, "征票")
@@ -279,17 +279,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if isLeader && term < args.Term {
 		//卸职
 		PartAInfo(rf.me, "卸职")
+		rf.mu.Lock()
 		rf.parseRaftStatus(follower)
+		rf.mu.Unlock()
 		reply.Success = false
 		return
 	}
 	rf.resetTimer()
-	rf.mu.Lock()
-	//当follower的日志超前于leader，需要将follower的lastAppend与leader保持一致
-	if args.PrevLogIndex < atomic.LoadInt32(&rf.lastApplied)-1 {
-		atomic.StoreInt32(&rf.lastApplied, args.PrevLogIndex+1)
-	}
-	rf.mu.Unlock()
 	//心跳包
 	if args.Entries == nil {
 		//		PartBInfo(rf.me, "收到心跳包")
@@ -305,17 +301,20 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	reply.Success = true
-	rf.status = follower
+	rf.parseRaftStatus(follower)
 	rf.term = args.Term
-	rf.hasVote = true
+	var prevLogIndex int32 = atomic.LoadInt32(&rf.lastApplied) - 1
 	if rf.backupFor == args.LeaderId {
-		if args.PrevLogIndex == atomic.LoadInt32(&rf.lastApplied)-1 {
+		if args.PrevLogIndex == prevLogIndex {
 			PartBInfo("日志追加完成")
 			rf.backupFor = -1
 		} else {
 			PartBInfo(rf.me, "正在被", args.LeaderId, "追加落后日志")
 			return
 		}
+	}
+	if prevLogIndex > args.PrevLogIndex {
+		return
 	}
 	rf.handleLogBackUp(args, reply)
 	if !reply.Success {
@@ -335,7 +334,7 @@ func (rf *Raft) handleLogBackUp(args *AppendEntriesArgs, reply *AppendEntriesRep
 	}
 	//PartAInfo("args.PrevLogIndex:", args.PrevLogIndex, "args.PrevLogTerm", args.PrevLogTerm, "prveLogIndex:", rf.lastApplied-1)
 	if args.PrevLogIndex > prevLogIndex {
-		PartAInfo("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!", atomic.LoadInt32(&rf.lastApplied)-1)
+		PartAInfo("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
 		//日志落后
 		reply.XTerm = -1
 		reply.XIndex = -1
@@ -343,6 +342,7 @@ func (rf *Raft) handleLogBackUp(args *AppendEntriesArgs, reply *AppendEntriesRep
 		reply.Success = false
 		return
 	} else if args.PrevLogTerm != prevLogTerm {
+		PartAInfo("+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
 		reply.XTerm = prevLogTerm
 		for prevLogIndex != -1 && rf.rlogs[prevLogIndex].term == prevLogTerm {
 			prevLogIndex--
@@ -356,6 +356,10 @@ func (rf *Raft) handleLogBackUp(args *AppendEntriesArgs, reply *AppendEntriesRep
 func (rf *Raft) handleAppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 
 	rf.mu.RLock()
+	//当follower的日志超前于leader，需要将follower的lastAppend与leader保持一致
+	if args.PrevLogIndex < atomic.LoadInt32(&rf.lastApplied)-1 {
+		atomic.StoreInt32(&rf.lastApplied, args.PrevLogIndex+1)
+	}
 	reply.Term = rf.term
 	var prevLogIndex int32 = -1
 	prevLogTerm := -1
@@ -364,9 +368,8 @@ func (rf *Raft) handleAppendEntries(args *AppendEntriesArgs, reply *AppendEntrie
 		prevLogIndex = atomic.LoadInt32(&rf.lastApplied) - 1
 		prevLogTerm = rf.rlogs[prevLogIndex].term
 	}
-	if args.Term < rf.term || args.PrevLogTerm != prevLogTerm || args.PrevLogIndex != prevLogIndex {
-		PartBInfo("args.PrevLogTerm:", args.PrevLogTerm, " prevLogTerm", prevLogTerm, " args.PrevLogIndex", args.PrevLogIndex, " prevLogIndex", prevLogIndex)
-		PartBInfo(rf.me, "日志落后，追加日志失败")
+	if args.PrevLogTerm != prevLogTerm || args.PrevLogIndex != prevLogIndex {
+		PartBInfo(rf.me, "日志落后，追加日志失败", "args.PrevLogTerm:", args.PrevLogTerm, " prevLogTerm", prevLogTerm, " args.PrevLogIndex", args.PrevLogIndex, " prevLogIndex", prevLogIndex, "\n")
 		reply.Success = false
 		rf.mu.RUnlock()
 		return
@@ -376,9 +379,11 @@ func (rf *Raft) handleAppendEntries(args *AppendEntriesArgs, reply *AppendEntrie
 		term:  args.NextLogTerm,
 		entry: args.Entries,
 	}
-	PartBInfo(rf.me, "追加来自", args.LeaderId, "的日志", args.NextLogIndex+1, ":", rl.entry)
 	rf.appendRLog(rl, args.NextLogIndex)
-	atomic.StoreInt32(&rf.lastApplied, args.NextLogIndex+1)
+	rf.mu.Lock()
+	atomic.AddInt32(&rf.lastApplied, 1)
+	rf.mu.Unlock()
+	PartBInfo(rf.me, "追加来自", args.LeaderId, "的日志", args.NextLogIndex+1, "  prevlogIndex", atomic.LoadInt32(&rf.lastApplied)-1)
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
@@ -407,7 +412,7 @@ func marshal(i interface{}) []byte {
 func (rf *Raft) appendRLog(rl rlog, index int32) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	for len(rf.rlogs) <= int(index) {
+	if len(rf.rlogs) <= int(index) {
 		//这一步只是起到扩容的作用，追加entry在这里只是为了占位，没有意义
 		//		PartBInfo("len:", len(rf.rlogs), " index:", index)
 		rf.rlogs = append(rf.rlogs, rl)
@@ -445,15 +450,14 @@ func (rf *Raft) leaderAppend(command interface{}, index int32, term int) {
 				atomic.AddInt32(&successAppend, 1)
 			} else if reply.Term > args.Term {
 				rf.mu.Lock()
-				rf.status = follower
-				rf.hasVote = true
+				rf.parseRaftStatus(follower)
 				rf.term = args.Term
 				rf.mu.Unlock()
 				return
 			}
 		}(i, args)
 	}
-	time.Sleep(time.Millisecond * 150)
+	time.Sleep(time.Millisecond * 40)
 	if atomic.LoadInt32(&successAppend) > int32(len(rf.peers)/2) {
 		rf.commitEntry(index)
 	}
@@ -493,7 +497,10 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 			entry: command,
 		}
 		PartBInfo("leader:", rf.me, " ", "追加日志 ", index+1)
-		rf.rlogs = append(rf.rlogs, rl)
+		if len(rf.rlogs) <= int(index) {
+			rf.rlogs = append(rf.rlogs, rl)
+		}
+		rf.rlogs[index] = rl
 		atomic.AddInt32(&rf.lastApplied, 1)
 		rf.leaderAppend(command, index, term)
 	}
@@ -540,9 +547,9 @@ func (rf *Raft) ticker() {
 
 func (rf *Raft) electLeader() {
 
+	rf.mu.Lock()
 	rf.parseRaftStatus(candidate)
 	PartAInfo(rf.me, "===========================开始选举 term:", rf.term)
-	rf.mu.RLock()
 	args := &RequestVoteArgs{
 		CandidateId:  rf.me,
 		Term:         rf.term,
@@ -552,7 +559,7 @@ func (rf *Raft) electLeader() {
 	if atomic.LoadInt32(&rf.lastApplied) != 0 {
 		args.LastLogTerm = rf.rlogs[atomic.LoadInt32(&rf.lastApplied)-1].term
 	}
-	rf.mu.RUnlock()
+	rf.mu.Unlock()
 	var successCount int32 = 0 // 被选上的票数
 	//对其它的节点征票
 	for i := 0; i < len(rf.peers); i++ {
@@ -566,28 +573,27 @@ func (rf *Raft) electLeader() {
 			if reply.VoteGranted {
 				atomic.AddInt32(&successCount, 1)
 			} else if reply.Term > rf.term {
-
 				PartAInfo(rf.me, "任期落后卸职")
 				rf.term = reply.Term
-				rf.status = follower
-				rf.hasVote = true
+				rf.parseRaftStatus(follower)
 			}
 			rf.mu.Unlock()
 		}(i, args)
 
 	}
-	time.Sleep(150 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 	//如果选票大于全部节点个数的一半，成功当选
 	PartAInfo(rf.me, "获得选票数", atomic.LoadInt32(&successCount))
-	if atomic.LoadInt32(&successCount) > int32(len(rf.peers)/2) {
-		rf.mu.RLock()
+	rf.mu.Lock()
+	if atomic.LoadInt32(&successCount) > int32(len(rf.peers)/2) && rf.status != follower {
 		PartAInfo(rf.me, "成功当选leader", rf.me, ":", rf.term)
-		rf.mu.RUnlock()
+		//rf.parseRaftStatus(leader)
 		rf.parseRaftStatus(leader)
 		go rf.heartBeat()
 	} else {
 		rf.parseRaftStatus(follower)
 	}
+	rf.mu.Unlock()
 }
 
 func (rf *Raft) heartBeat() {
@@ -610,6 +616,8 @@ func (rf *Raft) heartBeat() {
 			args.PrevLogTerm = rf.rlogs[args.PrevLogIndex].term
 		}
 		rf.mu.RUnlock()
+
+		//rf.mu.RLock()
 		for i := 0; i < len(rf.peers); i++ {
 			if i == rf.me {
 				continue
@@ -626,39 +634,49 @@ func (rf *Raft) heartBeat() {
 				if reply.Term > term {
 					//此leader已经落后于其它leader
 					PartAInfo(rf.me, "卸职")
-					rf.parseRaftStatus(follower)
 					rf.mu.Lock()
+					rf.parseRaftStatus(follower)
+
 					rf.term = reply.Term
 					rf.mu.Unlock()
 					return
-				} else {
+				} else if reply.XTerm != 0 {
 					rf.logBackup(server, reply)
 				}
 			}(i, args)
 		}
-		time.Sleep(time.Millisecond * 160)
+		//rf.mu.RUnlock()
+		time.Sleep(time.Millisecond * 120)
 	}
 }
 
 func (rf *Raft) logBackup(server int, reply *AppendEntriesReply) {
 	rf.mu.RLock()
+	commitIndex := atomic.LoadInt32(&rf.commitIndex)
+	lastAppend := atomic.LoadInt32(&rf.lastApplied)
 	PartBInfo(server, "日志落后", "xlen:", reply.XLen, " xterm:", reply.XTerm, " xindex:", reply.XIndex)
 	args := &AppendEntriesArgs{
 		Term:         rf.term,
 		LeaderId:     rf.me,
-		LeaderCommit: atomic.LoadInt32(&rf.commitIndex),
+		LeaderCommit: commitIndex,
 		PrevLogTerm:  -1,
 	}
+	rf.mu.RUnlock()
 	var appendIndex int32
 	if reply.XTerm == -1 {
 		//日志落后
-		appendIndex = atomic.LoadInt32(&rf.lastApplied) - 1 - reply.XLen
+		appendIndex = lastAppend - 1 - reply.XLen
 	} else {
 		//日志不一致
 		appendIndex = reply.XIndex
 	}
 	for {
-		for i := appendIndex; i < atomic.LoadInt32(&rf.lastApplied); i++ {
+		for i := appendIndex; i < lastAppend; i++ {
+			rf.mu.RLock()
+			if rf.status != leader {
+				rf.mu.RUnlock()
+				return
+			}
 			args.NextLogTerm = rf.rlogs[i].term
 			args.Entries = rf.rlogs[i].entry
 			args.PrevLogIndex = i - 1
@@ -666,28 +684,27 @@ func (rf *Raft) logBackup(server int, reply *AppendEntriesReply) {
 			if args.PrevLogIndex != -1 {
 				args.PrevLogTerm = rf.rlogs[args.PrevLogIndex].term
 			}
+			rf.mu.RUnlock()
 			//PartBInfo("====leader追加日志",)
 			reply2 := &AppendEntriesReply{}
 			if !rf.sendAppendEntries(server, args, reply2) {
 				PartBInfo("日志恢复超时")
-				rf.mu.RUnlock()
 				return
 			}
 			if reply2.Success {
-				if i == atomic.LoadInt32(&rf.lastApplied)-1 {
-					rf.mu.RUnlock()
+				if i == lastAppend-1 {
+					PartBInfo("********************************************************************************")
 					return
 				}
 				continue
 			} else if reply2.Term > args.Term {
-				rf.mu.RUnlock()
 				rf.mu.Lock()
-				rf.status = follower
-				rf.hasVote = true
+				rf.parseRaftStatus(follower)
 				rf.term = args.Term
 				rf.mu.Unlock()
 				return
 			} else {
+				PartBInfo("定位出错误，appendIndex前移", appendIndex)
 				appendIndex--
 				break
 			}
@@ -699,7 +716,7 @@ func (rf *Raft) logBackup(server int, reply *AppendEntriesReply) {
 //
 // the service or tester wants to create a Raft server. the ports
 // of all the Raft servers (including this one) are in peers[]. this
-// server's port is peers[me]. all the servers' peers[] arrays
+// server'S port is peers[me]. all the servers' peers[] arrays
 // have the same order. persister is a place for this server to
 // save its persistent state, and also initially holds the most
 // recent saved state, if any. applyCh is a channel on which the
@@ -715,17 +732,15 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
-	rf.hasVote = true
 	rf.status = follower
+	rf.hasVote = true
 	rf.timer = time.NewTimer(generateTimeOut())
 	rf.applyCh = applyCh
 	rf.backupFor = -1
 	atomic.StoreInt32(&rf.commitIndex, -1)
 	// Your initialization code here (2A, 2B, 2C).
-
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-
 	// start ticker goroutine to start elections
 	go rf.ticker()
 
@@ -733,17 +748,19 @@ func Make(peers []*labrpc.ClientEnd, me int,
 }
 
 func (rf *Raft) parseRaftStatus(status RaftStatus) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	switch status {
 	case rf.status:
-		return
+		if rf.status == follower && rf.hasVote == false {
+			rf.hasVote = true
+			return
+		}
 	case follower:
 		rf.status = follower
 		rf.hasVote = true
 		rf.resetTimer()
 	case leader:
 		rf.status = leader
+		rf.hasVote = true
 	case candidate:
 		rf.term++
 		rf.status = candidate

@@ -1,6 +1,8 @@
 package raft
 
 import (
+	"6.824/labgob"
+	"bytes"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -31,17 +33,22 @@ func TestTime(t *testing.T) {
 	}
 }
 
-type s struct {
+type S struct {
 	x int
 	y int
 }
 
-func A(x *s) {
+type K struct {
+	x string
+	y []int
+}
+
+func A(x *S) {
 	fmt.Println(x)
 }
 
 func TestLog(t *testing.T) {
-	s := &s{
+	s := &S{
 		x: 1,
 		y: 2,
 	}
@@ -56,4 +63,11 @@ func TestTicker(t *testing.T) {
 		<-timer.C
 		fmt.Println("超时")
 	}
+}
+
+func TestGob(t *testing.T) {
+	s := S{x: 1, y: 2}
+	data := bytes.NewBuffer([]byte{})
+	encoder := labgob.NewEncoder(data)
+	encoder.Encode(s)
 }
