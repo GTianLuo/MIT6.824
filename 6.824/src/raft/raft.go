@@ -313,7 +313,7 @@ func (rf *Raft) handleHeartBeat(args *AppendEntriesArgs, reply *AppendEntriesRep
 	var prevLogIndex int32 = atomic.LoadInt32(&rf.lastApplied) - 1
 	if rf.backupFor == args.LeaderId && rf.backupForTerm == args.Term {
 		if args.PrevLogIndex == prevLogIndex {
-			PartBInfo("日志追加完成")
+			PartBInfo(rf.me, "日志追加完成")
 			rf.backupFor = -1
 		} else {
 			PartBInfo(rf.me, "正在被", args.LeaderId, "追加落后日志")
@@ -447,9 +447,15 @@ func (rf *Raft) leaderAppend(command interface{}, index int32, term int) {
 		}
 		go func(server int, args *AppendEntriesArgs) {
 			reply := &AppendEntriesReply{}
-			if !rf.sendAppendEntries(server, args, reply) {
-				PartBInfo(rf.me, "向", server, "追加日志超时")
-				return
+			for i := 0; i < 3; i++ {
+				if !rf.sendAppendEntries(server, args, reply) {
+					PartBInfo(rf.me, "向", server, "追加日志超时")
+				} else {
+					break
+				}
+				if i == 2 {
+					return
+				}
 			}
 			if reply.Success {
 				atomic.AddInt32(&successAppend, 1)
@@ -624,9 +630,15 @@ func (rf *Raft) heartBeat() {
 			}
 			go func(server int, args *AppendEntriesArgs) {
 				reply := &AppendEntriesReply{}
-				if !rf.sendAppendEntries(server, args, reply) {
-					//PartAInfo(rf.me, "向", server, "发送心跳失败")
-					return
+				for j := 0; j <= 3; j++ {
+					if !rf.sendAppendEntries(server, args, reply) {
+						//PartAInfo(rf.me, "向", server, "发送心跳失败")
+					} else {
+						break
+					}
+					if j == 2 {
+						return
+					}
 				}
 				if reply.Success {
 					return
@@ -689,7 +701,7 @@ func (rf *Raft) logBackup(server int, reply *AppendEntriesReply) {
 			reply2 := &AppendEntriesReply{}
 
 			if !rf.sendAppendEntries(server, args, reply2) {
-				PartBInfo("日志恢复超时")
+				PartBInfo(server, "日志恢复超时")
 				return
 			}
 			if reply2.Success {
@@ -705,7 +717,7 @@ func (rf *Raft) logBackup(server int, reply *AppendEntriesReply) {
 				rf.mu.Unlock()
 				return
 			} else {
-				PartBInfo("定位出错误，appendIndex前移", appendIndex)
+				PartBInfo(server, "定位出错误，appendIndex前移", appendIndex)
 				appendIndex--
 				break
 			}
